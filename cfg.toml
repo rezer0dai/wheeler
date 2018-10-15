@@ -1,0 +1,72 @@
+# if false then classical per step learning, altought quite slow in our setup uh oh ...
+threading = false#true#
+device = "cpu"#"cuda"#
+tensor = "torch.DoubleTensor"#"torch.cuda.DoubleTensor"#
+model_path = "models_dtb"
+
+n_step = 4              # reduce variance, how many rewards we take into account at critic predictions, but increasing bias a little by little
+n_critics = 2           # how many critics we want per task, must be < than n_step ( temporary limitation ~ lazyness )
+batch_size = 8         # for one critic! therefore real full batch = batch_size * n_critics * n_simulations(this is given by task)
+discount_rate = 0.95    # rewards discount factor
+disjoint_critics = false#true#
+her_radius = 7
+
+task = "QUADRO-PROJECT"#"LunarLanderContinuous-v2"#"LunarLander-v2"#"MountainCarContinuous-v0"#
+n_simulations = 1 # make most focus on X+Y coordinates ...
+action_repeat = 2
+max_reward_val = +1000 # seems DDPG is known to predict numbers out of real scope
+min_reward_val = -10000
+max_n_eps = 100#1000
+replay_size = 3000
+
+lr_actor = 5e-5
+lr_critic = 1e-6
+
+tau_base = 1e-1
+tau_final = 7e-2
+tau_replay_counter = 2000#000
+tau_adapt = 1e-2 # retrain by little to bias towards 'true' rewards
+# in this case our rewards does not form proper Q-value function
+adapt_fit = false#true#
+
+replay_selection_gran = 20 # batch_size * this == random selection from memory ( will be squeezed based on later preferences )
+learn_delta = 1 # how fast will be fast learn ( in num of taken actions )
+
+# threading sampling schedule
+execution_slow_down = 0#1e-10#
+exp_sampler_wait = 1e-3#0#
+learn_loop_to = 1e-3#0#
+collector_scale_factor = 1
+sampler_scale_factor = 2
+learner_scale_factor = 3
+
+# usually when we normalize advantages, we want to use sum in PG, and also attention is preferred
+pg_mean = true#false# use torch.mean instead of torch.sum for policy gradients backprop
+
+advantages_enabled = false#true#
+advantages_boost = false#true#
+attention_enabled = false#true#
+normalize_advantages = true#false#
+attention_hidden = 64#128#
+attention_amplifier = 3.0
+good_reach = 2 # select from experience only related things if task is designed that way
+
+max_n_step = 1#-10000#
+
+# scheduling of replay buffer randomnes
+replay_alpha = 1.0
+replay_beta_iters = 1000 # here we should have enough experience to do serious prioritzation
+replay_beta_base = 0.2
+replay_beta_top = 0.6
+replay_prio_eps = 1e-3
+
+#####################################
+# neural nets settings
+#####################################
+
+#featurizing of space
+history_count = 3
+action_features = 100#400#400#64#300#
+her_state_features = 100
+her_state_size = 3
+gru_over_lstm = true#false#
