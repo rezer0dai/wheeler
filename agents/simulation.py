@@ -1,28 +1,27 @@
 from __future__ import print_function
-import time
+import time, threading
 import numpy as np
 from collections import deque
 
-import torch
-
+from agents.actor import Actor
 from agents.critic import Critic
 
-import threading
-from concurrent.futures import ThreadPoolExecutor
+import torch
+import torch.multiprocessing
+from torch.multiprocessing import Queue, SimpleQueue, Process
 
-class Simulation:
-    def __init__(self, cfg, model, task, present_w_grads, present_wo_grads, future_wo_grads):
+class Simulation(torch.multiprocessing.Process):
+    def __init__(self, cfg, model, task, xid, shared_actor, model_actor, a_grads, keep_exploring, signal, drop):
+        super(Simulation, self).__init__()
+
         self.cfg = cfg
+        self.xid = xid
+        self.task = task.new(self.xid)
 
-        if not self.cfg['threading']:
-            self.cfg['collector_scale_factor'] = 0
+        self.actor = shared_actor
+#        self.master_actor = shared_actor
+#        self.actor = Actor(model_actor.new(task, cfg))
 
-        # well not sure if i assign here actor itself if it will be copy or ref used later
-        self.present_w_grads = present_w_grads
-        self.present_wo_grads = present_wo_grads
-        self.future_wo_grads = future_wo_grads
-
-        self.batches = deque(maxlen=10)
         self.best_max_step = self.cfg['max_n_step']
 
         self.count = 0
@@ -31,60 +30,81 @@ class Simulation:
         self.max_n_episode = task.max_n_episode()
 
         self.batch_size = self.cfg['batch_size']
-        self.critics = [Critic(cfg, model, task, i) for i in range(self.cfg['n_critics'])]
+
+        self.td_backdoor, self.keep_exploring, self.signal, self.drop = a_grads, keep_exploring, signal, drop
+
+        self.done = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
+        self.complete = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
+        self.stats = [Queue() for _ in range(self.cfg['n_critics'])]
+        self.exps = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
+        self.review = [Queue() for _ in range(self.cfg['n_critics'])]
+        self.comitee = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
+        self.td_gate = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
+        self.critics = [Critic(cfg, model, self.task, i,
+            self.done[i],
+            self.exps[i],
+            self.review[i],
+            self.comitee[i],
+            self.td_gate[i],
+            self.stats[i],
+            self.complete[i], self.actor) for i in range(self.cfg['n_critics'])]
 
         self.lock = threading.RLock()
 
-        self.stop = True
-        self.xid = task.xid
+    def turnon(self):
+        for c in self.critics:
+            c.start()
 
-    def get_grads(self):
-        while not self.stop:
-            with self.lock:
-                if len(self.batches):
-                    break
-            time.sleep(self.cfg['exp_sampler_wait'])
+    def q_a_function(self, states, features, td_targets):
+        actions, features = self.actor.get_action_w_grad(states, features)
+        features = features.unsqueeze(0).transpose(0, 2)
 
-        with self.lock:
-            if len(self.batches):
-                return self.batches.pop()#[-1]# the newest coolest ...
-        return np.vstack([[[]] * 3])
+        w = [c.q_a_function(
+                states,
+                actions.clone(),
+                features.clone(),
+                td) for c, td in zip(self.critics, td_targets)]
 
-    def turnon(self, task, n_episodes, actor):
+        return states, actions.detach().cpu().numpy(), w
+
+    def run(self):
         self.stop = False
-        collectors = [threading.Thread(target=self.__eval_loop) for _ in range(self.cfg['collector_scale_factor'])]
-        for collector in collectors:
-            collector.start()
+#        looper = threading.Thread(target=self._eval_loop)
+        looper = Process(target=self._eval_loop)#, args=(self.review, self.comitee, self.td_backdoor))
+        looper.start()
 
-        score = self.__run_critics(task, n_episodes, actor)
+        while True:
+            seeds = self.keep_exploring.get()
+            if None == seeds:
+                break
+            self._run(seeds)
+
+            for c in self.complete:
+                c.get()
+# dead lock scenario : another simulation offers more batches to review..
+            while any(not c.empty() for c in self.review):
+                if not self.drop.empty():#dead lock temporary fix ?
+                    break
+
+            for c in self.review:
+                while not c.empty():
+                    c.get()
+
+            self.signal.put(True) # sync
+# well this whole sync seems like overengineering of another magnitude, when refactoring do better design!!
+            self.drop.get()
+
+        for c in self.done:
+            c.put(True)
 
         self.stop = True
-        for collector in collectors:
-            collector.join()
+        looper.join()
 
-        return score
-
-    def __run_critics(self, task, n_episodes, actor):
-        for critic in self.critics:
-            critic.turnon()
-        score = self.__run_task(task, n_episodes, actor)
-        for critic in self.critics:
-            critic.shutdown()
-        return score
-
-    def __run_task(self, task, n_episodes, actor):
-        return self.__run(task, n_episodes, actor)
-
-    def __eval_loop(self):
-        while not self.stop:
-            self.__eval()
-            time.sleep(self.cfg['exp_sampler_wait'])
-
-    def __run(self, task, n_episodes, actor):
+    def _run(self, seeds):
         self.count += 1
         score_board = []
 
-        for e in range(n_episodes):
+        for e, seed in enumerate(seeds):
             states = []
             actions = []
             features = []
@@ -93,134 +113,115 @@ class Simulation:
             rewards = []
             goods = []
 
-            state = task.reset()
+            state = self.task.reset(seed)
+            next_state = state
 
-            # for i in range(len(state)):
-                # state[i] = len(rewards)
-
-            f_pi = np.zeros(self.cfg['action_features'])
+            f_pi = np.zeros(shape=(1, 1, self.cfg['history_features']))
             history = deque(maxlen=self.cfg['history_count'])
-            for s in [state] * self.cfg['history_count']:
+            for s in [np.zeros(len(state))] * self.cfg['history_count']:
                 history.append(np.vstack(s))
 
+            features += [f_pi] * 1#self.cfg['history_count']
+
+            done = False
             while len(rewards) < self.max_n_episode:
+#                self._eval(self.td_backdoor)
+
+                state = next_state
                 history.append(np.vstack(state))
-                state = np.vstack(history).squeeze(1)#
-                state = np.hstack([task.her_state(), state])
+                state = np.vstack(history).squeeze(1)
 
-                #  print("\r  [ step", len(rewards), "]  ", end="")
+                state = self.task.transform_state(state)
+                if done:
+                    break
 
-                # if task.xid == 0: task.env.render()
-
-                features.append(f_pi)
-                while not self.cfg['threading'] and len(self.batches):
-                    time.sleep(self.cfg['exp_sampler_wait'])
-
-                a_pi, f_pi = self.present_wo_grads(state, f_pi)
-                action, next_state, reward, done, good = task.step(a_pi)
-
-                #  # as we do lots of transposing & stacking, better to double check
-                #  # if in neural network we see really what we want ...
-                # next_state = next_state.copy()
-                #  for i in range(len(action)):
-                #      action[i] = len(rewards)
-                #  reward = len(rewards)
-                #  for i in range(len(next_state)):
-                #      next_state[i] = i * .2 + len(rewards)
-                #  # double check this with NN
-                #  print(action)
-                #  print(next_state)
-                #  print(state)
-                #  print("~"*80)
+                norm_state = self.task.normalize_state(state.copy())
+                a_pi, f_pi = self.actor.get_action_wo_grad(norm_state, features[-1])
+                action, next_state, reward, done, good = self.task.step(a_pi.copy())
 
                 # here is action instead of a_pi on purpose ~ let user tell us what action he really take!
                 actions.append(action)
+                features.append(f_pi)
                 rewards.append(reward)
                 states.append(state)
                 goods.append(good)
 
-                feats = f_pi
-
-                self.__do_fast_train(
+                self._do_fast_train(
                         states[-2*self.n_step:],
-                        features[-2*self.n_step:],
+                        features[-2*self.n_step-1:],#self.cfg['history_count']:],
                         actions[-2*self.n_step:],
                         rewards[-2*self.n_step:],
                         goods[-2*self.n_step:],
                         e + len(states))
 
-                if not self.cfg['threading'] and None != self.critics[0].batches:
-                    self.__eval(actor)
-
                 score += reward * self.discount**len(rewards)
 
-                if done:
-                    break
-                state = next_state
+                if 0 == self.xid:
+                    self._print_stats(e, rewards, a_pi)
 
-#               if 0 == task.xid: print("\r[{:4d}::{:6d}] training = {:4d}, steps = {:2d}, max_step = {:2d}, reward={:2f} {}".format(
-#                   self.count, task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), self.critics[0].debug_out_ex), end="")
-
-            history.append(np.vstack(next_state))
-            next_state = np.hstack([task.her_state(), np.vstack(history).squeeze(1)])
-            self.__do_full_ep_train(states, features, actions, rewards, goods, next_state, e)
+            self._do_full_ep_train(
+                    states,
+                    features[:-1],#-self.cfg['history_count']],
+                    actions, rewards, goods, state, e)
 
             self.best_max_step = max(self.best_max_step, np.sign(self.cfg['max_n_step']) * len(rewards))
-            score_board = np.hstack([score_board, len(rewards), rewards, self.best_max_step])
 
-            print("\r[{:4d}::{:6d}] training = {:4d}, steps = {:2d}, max_step = {:2d}, accumulated {:4f}<->{:4f}, replay {:4d} name:<{}> {}".format(
-                self.count, task.iter_count(), e, len(rewards), abs(self.best_max_step), score, sum(rewards), len(self.critics[0].replay), task.name(), self.critics[0].debug_out), end="")  # [debug]
+            self._print_stats(e, rewards, a_pi)
 
-        return score_board
+#            if True:#any(c.empty() for c in self.review):
+#                self._run([s + 1 for s in seeds])
 
-    def __do_fast_train(self, states, features, actions, rewards, goods, delta):
-        """
-        advantage of A2C .. A3C .. methods are that they can learn online
-         ~ we dont need to wait untill full episode
-         ~ therefore we can adapt during applying some policy ad update it on the fly
-        """
-        # well this assertion does not particulary means that will be not effective to train otherwise
-        # buuut, easy to do implementation currently like this :) and should be good trade-off "baseline" ~ maybe ...
+    def _print_stats(self, e, rewards, a_pi):
+        if not self.cfg['dbgout']:
+            print("\rstep:{:4d} :: {} [{}]".format(len(rewards), sum(rewards), self.count), end="")
+
+        if not self.cfg['dbgout'] or self.stats[0].empty():
+            return
+        debug_out = self.stats[0].get()
+        print("\r[{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
+            self.count, self.task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), a_pi, debug_out), end="")
+
+    def _do_fast_train(self, states, features, actions, rewards, goods, delta):
         if delta % self.n_step:
             return # dont overlap ~ ensure critics has some unique data ...
         if len(states) < self.n_step * 2:
             return # not enough data
-        if not sum(goods[self.n_step:]):
-            return # nothing good to learn from this
 
         rewards += [0.] * self.n_step
-        states, _, actions, features, n_states, n_rewards, n_actions, n_features = self.__process_data(
-                states, actions, features, rewards, goods)
+        states, _, actions, features, n_states, n_rewards, n_actions, n_features = self._process_data(
+                states, actions, features, rewards, [True]*len(goods))#goods)
 
         max_ind = len(states)
 
         # print("fast ~>", len(states), max_ind, rewards, n_rewards)
-        self.__inject_into_critic(
+        self._forward(
             states[:max_ind],
             rewards[:max_ind],
             actions[:max_ind],
             features[:max_ind],
             n_states[:max_ind],
             n_rewards[:max_ind],
+            n_actions[:max_ind],
             n_features[:max_ind],
-            delta)
+            delta, False)
 
-    def __do_full_ep_train(self, states, features, actions, rewards, goods, next_state, e):
+    def _do_full_ep_train(self, states, features, actions, rewards, goods, final_state, e):
         if not sum(goods):
             return
 
-        states += [next_state] * self.n_step
+        states += [final_state] * self.n_step
         actions += [actions[-1]] * self.n_step
-        features += [features[-1]] * self.n_step
+        features += [np.zeros(shape=features[0].shape)] * self.n_step
         rewards += [0.] * self.n_step
         #filter only those from what we learned something ...
         goods += [False] * self.n_step
 
-        states, rewards, actions, features, n_states, n_rewards, n_actions, n_features = self.__process_data(
+        states, rewards, actions, features, n_states, n_rewards, n_actions, n_features = self._process_data(
                 states, actions, features, rewards, goods)
 
+        rewards = self._discount_rewards(rewards, self.discount)
         #we dont need to forward terminal state
-        self.__train_critics(
+        self._forward(
             states[:-1],
             rewards[:-1],
             actions[:-1],
@@ -229,100 +230,107 @@ class Simulation:
             n_rewards[:-1],
             n_actions[:-1],
             n_features[:-1],
-            e)
+            e, True)
 
-    def __process_data(self, states, actions, features, rewards, goods):
-            indicies = filter(lambda i: sum(goods[i:i+self.n_step*self.cfg['good_reach']]) > 0, range(len(goods) - self.n_step))
+    def _process_data(self, states, actions, features, rewards, goods):
+        indicies = filter(lambda i: sum(goods[i:i+self.n_step*self.cfg['good_reach']]) > 0, range(len(goods) - self.n_step))
 
-            return zip(*map(lambda i: [
-                states[i],
-                rewards[i],
-                actions[i],
-                features[i],
-                states[i+self.n_step],
-                [self.__n_reward(rewards[i:i+self.n_step], self.discount)],
-                actions[i+self.n_step],
-                features[i+self.n_step],
-                ], indicies))
+        return zip(*map(lambda i: [
+            states[i],
+            rewards[i],
+            actions[i],
+            features[i],
+            states[i+self.n_step],
+            [self._n_reward(rewards[i:i+self.n_step], self.discount)],
+            actions[i+self.n_step],
+            features[i+self.n_step],
+            ], indicies))
 
-    def __resolve_index(self, max_step, ind):
+    def _resolve_index(self, max_step, ind):
         if not self.cfg['disjoint_critics'] or len(self.critics) > max_step:
             return 0, 1
         assert not self.cfg['disjoint_critics'] or len(self.critics) <= max_step, "can not disjoint critics if their # is higher than n_step!"
         return ind % len(self.critics), len(self.critics)
 
-    def __inject_into_critic(self, states, rewards, actions, features, n_states, n_rewards, n_features, e):
-        for i, critic in enumerate(self.critics):
-            ind, max_step = self.__resolve_index(len(states), e + i)
-            critic.inject(#fast operation, and we want to slow down step exec by little anyway :)
+    def _forward(self, states, rewards, actions, features, n_states, n_rewards, n_actions, n_features, e, full):
+        for i, exp_q in enumerate(self.exps):
+            ind, max_step = self._resolve_index(len(states), e + i)
+            exp_q.put([full, (
                 states[ind:][::max_step],
                 rewards[ind:][::max_step],
                 actions[ind:][::max_step],
                 features[ind:][::max_step],
                 n_states[ind:][::max_step],
                 n_rewards[ind:][::max_step],
+                n_actions[ind:][::max_step],
                 n_features[ind:][::max_step],
-                )
+                )])
 
-    def __train_critics(self, states, rewards, actions, features, n_states, n_rewards, n_actions, n_features, e):
-        for i, critic in enumerate(self.critics):
-            ind, max_step = self.__resolve_index(len(states), e + i)
-            threading.Thread(# heavy processing
-                target=critic.train, args = (
-                    states[ind:][::max_step],
-                    rewards[ind:][::max_step],
-                    actions[ind:][::max_step],
-                    features[ind:][::max_step],
-                    n_states[ind:][::max_step],
-                    n_rewards[ind:][::max_step],
-                    n_actions[ind:][::max_step],
-                    n_features[ind:][::max_step],
-                    )
-                ).start()
-            # collect those to some array may be good idea .. TODO ..
-            # once we done with simulation ( training over )
-            # we want be sure no thrads whatsover is running wildly ..
-
-    def __eval(self, actor = None):
-        s, a0, f1, n, r, fn = np.hstack(map(lambda c: c.batch(), self.critics))
-        if not len(s):
-            return
-
-        # convert
-        s = np.vstack(s)
-        a0 = np.vstack(a0)
-        f1 = np.vstack(f1)
-        n = np.vstack(n)
-        r = np.vstack(r)
-        fn = np.vstack(fn)
-
-        # for ddpg and gae; REPLAY!!
-        a1, _ = self.present_w_grads(s, f1)
-        an, _ = self.future_wo_grads(n, fn)
-
-        def batch():
-            yield (s, a0, a1, f1, n, r, an, fn)
-
-#        advantages = [c.eval(*batch()) for c in self.critics]
-
-        pool = ThreadPoolExecutor(len(self.critics))
-        advantages = pool.map(Critic.eval, self.critics, # what
-            [*batch()] * len(self.critics)) # arguments
-
-        # i would like to make it more general not tighter to pytorch, but for now ok
-        v = torch.stack([w for w in advantages]).mean(0)
-
-        assert len(v) == len(s) and len(s) == len(a0), "s - v - a lengt missmatch.."
-
-# a => forwarding actions just to let know to back-end what was really choosen
-        if None != actor: # single thread ~ easier to debug
-            actor.learn(s, v, a0, 1e-3)
-
-        with self.lock:
-            self.batches.append([ s, v, a0 ])
-
-    def __n_reward(self, rewards, gamma):
+    def _n_reward(self, rewards, gamma):
         """
         discounted n-step reward, for advantage calculation
         """
         return sum(map(lambda t_r: t_r[1] * gamma**t_r[0], enumerate(rewards)))
+
+    def _discount_rewards(self, r, gamma):
+        """
+        msft reinforcement learning explained course code, GAE approach
+        """
+        discounted_r = np.zeros(len(r))
+        running_add = 0.
+        for t in reversed(range(0, len(r))):
+            running_add = running_add * gamma + r[t]
+            discounted_r[t] = running_add
+        return discounted_r
+
+    def _eval_loop(self):
+        while not self.stop:
+#            time.sleep(self.cfg["learn_loop_to"])
+            self._eval(self.td_backdoor)
+
+    def _eval(self, td_gate):
+        if not td_gate.empty():
+            return
+        if any(c.empty() for c in self.review):
+            return
+
+# ok lets examine updated actor, we doing off-policy anyway
+#        self.actor.reload(self.master_actor)
+        def flush(c):
+            while not c.empty():
+                yield c.get()
+                break
+
+#zip(*map(lambda c: zip(*flush(c)), self.review))#
+# OUCH again we doing numpy stack magic ... TODO : refactor
+        s, a0, f0, n, r, fn = np.hstack(map(lambda c: np.hstack(flush(c)), self.review))
+        if not len(s):
+            return
+
+#        threading.Thread(target=self._replay, args=(td_gate, s, a0, f0, n, r, fn, )).start()
+
+#    def _replay(self, td_gate, s, a0, f0, n, r, fn):
+        s = np.vstack(s)
+        a0 = np.vstack(a0)
+        f0 = np.stack(f0)
+        n = np.vstack(n)
+        fn = np.stack(fn)
+        r = np.vstack(r)
+#        td_gate.put([s, f0, r])
+#        return
+
+# for ddpg and gae; REPLAY!! -> f1 <- target == more stable, explorer more dynamic ...
+        an, fn = self.actor.predict(n, fn)
+        _, f1 = self.actor.get_action_wo_grad(s, f0)#self.actor.predict(s, f0)#
+
+        def batch():
+            yield (s, a0, f1, n, an, fn, r)
+
+        with self.lock:
+    # push for review of all critics
+            for critic in self.comitee:
+                critic.put(*batch())
+    # get some reviewed data
+            td_targets = [critic.get() for critic in self.td_gate] # arguments
+
+        td_gate.put([s, f0, td_targets])

@@ -4,21 +4,21 @@ import torch.nn.functional as F
 
 import numpy as np
 
+from utils.nes import *
+
+# well just POC of my mindset how curiosity should works ( not properly tested imho .. )
+
 class CuriosityNN(nn.Module):
     def __init__(self, task, cfg, wrap_action):
         super(CuriosityNN, self).__init__()
         torch.set_default_tensor_type(cfg['tensor'])
         self.cfg = cfg
 
-        self.state_size = cfg['her_state_size'] + task.state_size() * self.cfg['history_count']
+        self.state_size = cfg['her_state_size'] + task.state_size() * cfg['history_count']
         self.action_size = task.action_size()
         self.wrap_action = wrap_action
 
-        self.net = nn.Sequential(
-                    nn.Linear(self.state_size * 2, 64),
-                    nn.ReLU(True),
-                    nn.Linear(64, self.action_size),
-                    )
+        self.net = NoisyNet([self.state_size * 2, 64, 64, self.action_size])
 
     def forward(self, state, next_state):
         state = torch.DoubleTensor(state).to(self.cfg['device'])
@@ -27,12 +27,18 @@ class CuriosityNN(nn.Module):
         return self.wrap_action(
                 self.net(flow))
 
+    def renoise(self):
+        self.net.sample_noise()
+
+    def parameters(self):
+        return self.net.parameters()
+
 class CuriosityPrio:
     def __init__(self, task, cfg):
         self.cfg = cfg
         self.rewarder = CuriosityNN(task, cfg, task.wrap_action).to(task.device())
         self.action_range = task.action_range()
-        self.opt = torch.optim.Adam(self.rewarder.parameters(), 1e-3)
+        self.opt = torch.optim.Adam(self.rewarder.parameters(), 1e-4)
 
     def weight(self, s, n, a):
         action = self.rewarder(s, n).detach()
@@ -41,8 +47,8 @@ class CuriosityPrio:
         dist = np.abs(norm)
         clip = np.clip(dist, 0. + 1e-10, 1. - 1e-10)
         scale = clip ** 2
-        raw = scale.mean(dim=2).view(clip.size(0), -1)
-        return raw.mean(dim=1)
+        reward = scale.mean(dim=1).cpu().numpy()
+        return reward
 
     def update(self, s, n, a):
         a = torch.DoubleTensor(a).reshape(len(a), -1).to(self.cfg['device'])
@@ -52,3 +58,4 @@ class CuriosityPrio:
                     self.rewarder(s, n), a)
             loss.backward()
         self.opt.step(optim)
+        self.rewarder.renoise()

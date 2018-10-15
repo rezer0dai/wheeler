@@ -6,37 +6,38 @@ save = false
 dbgout=true
 loss_debug = false#true
 
-n_step = 4              # reduce variance, how many rewards we take into account at critic predictions, but increasing bias a little by little
+n_step = 7              # reduce variance, how many rewards we take into account at critic predictions, but increasing bias a little by little
 n_critics = 1           # how many critics we want per task, must be < than n_step ( temporary limitation ~ lazyness )
 batch_size = 16         # for one critic! therefore real full batch = batch_size * n_critics * n_simulations(this is given by task)
-discount_rate = 0.97   # rewards discount factor
-disjoint_critics = false#true#
+discount_rate = 0.995   # rewards discount factor
+disjoint_critics = true#false#
 
-task = "Pendulum-v0"
+task = "Acrobot-v1"
 n_simulations = 1
 action_repeat = 1
 max_reward_val = +100
-min_reward_val = -200
+min_reward_val = -700
 replay_size = 100000
-max_n_eps = 200
+max_n_eps = 500
 max_ep_draw_count = 40
 mcts_rounds = 3
 mcts_random_cap = 1000000
-td_lambda_replay_count = 10
 
+td_lambda_replay_count = 10
 reinforce_clip = false
 tau_clip = 0
 
-lr_actor = 1e-3
-lr_critic = 1e-4
+lr_actor = 1e-4
+lr_critic = 1e-3
 
-tau_base = 1e-2 # update from full episodes
-tau_final = 7e-3
-tau_replay_counter = 100000
+tau_base = 5e-2 # update from full episodes
+tau_final = 3e-2
+tau_replay_counter = 10000
 tau_adapt = 1e-3 # update from active experiences ~ we want to have it lower generaly
 actor_update_delay = 4 # soft update of actor ~ off-policy, how much fits on explorer before
 critic_update_delay = 5 # soft update of critic ~ off-policy, how much fits on explorer before
-critic_learn_delta = 5 # here how much episodes before critic(and therefore also actor)-explorer update
+critic_learn_delta = 80 # here how much episodes before critic(and therefore also actor)-explorer update
+
 
 # usually when we normalize advantages, we want to use sum in PG, and also attention is preferred
 pg_mean = true#false#
@@ -56,7 +57,7 @@ max_n_step = -10000#1#
 replay_alpha = 1.0
 replay_beta_iters = 6000 # here we should have enough experience to do serious prioritzation
 replay_beta_base = 0.2
-replay_beta_top = 0.7
+replay_beta_top = 0.8
 replay_prio_eps = 1e-10
 
 #####################################
@@ -64,9 +65,9 @@ replay_prio_eps = 1e-10
 #####################################
 
 #lstm advancement
-history_count = 3
+history_count = 4
 history_features = 64
 
-her_state_size = 0
-her_state_features = 0
-her_max_ratio = 0
+her_state_size = 1
+her_state_features = 64
+her_max_ratio = 3
