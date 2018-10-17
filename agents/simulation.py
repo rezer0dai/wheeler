@@ -171,7 +171,7 @@ class Simulation(torch.multiprocessing.Process):
         if not self.stats[0].empty():
             debug_out = self.stats[0].get()
 
-        self.learned = len(debug_out) > 0
+        self.learned = self.learned or (len(debug_out) > 0)
 
 #        if 0 != self.xid:
 #            return
