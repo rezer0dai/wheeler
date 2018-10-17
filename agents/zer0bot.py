@@ -32,12 +32,12 @@ class Zer0Bot:
         self.actor.share_memory()
 
     def _setup_critics(self, model, model_actor):
-        self.td_gate, self.mcts_timeout, self.signal, self.drop = zip(*[(
-            Queue(), SimpleQueue(), Queue(), Queue()) for i in range(self.task_main.subtasks_count())])
+        self.td_gate, self.mcts_timeout, self.signal = zip(*[(
+            Queue(), SimpleQueue(), Queue()) for i in range(self.task_main.subtasks_count())])
 
         self.simulations = [Simulation(
                 self.cfg, model, self.task_main, i, self.actor, model_actor,
-                self.td_gate[i], self.mcts_timeout[i], self.signal[i], self.drop[i]
+                self.td_gate[i], self.mcts_timeout[i], self.signal[i]
                 ) for i in range(self.task_main.subtasks_count())]
 
     def act(self, state, history):# get exploitation action ( stable actor )
@@ -58,8 +58,7 @@ class Zer0Bot:
         while all(c.empty() for c in self.signal):
             self._train_worker()
 
-        for d, s in zip(self.drop, self.signal):
-            d.put(True) # fixing dead-lock
+        for s in self.signal:
             s.get()
 
     def _train_worker(self):

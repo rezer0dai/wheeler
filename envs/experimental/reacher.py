@@ -47,17 +47,15 @@ def fun_reward(s, n, gs, objective_id, her):
 #    print(".. ", n[3:3+3], gs[:3])
     hs = cfg['her_state_size']
     ind = -(len(n) - hs) // cfg['history_count']
-    return -1 * (2 * CLOSE_ENOUGH < np.abs(goal_distance(s[ind:ind+hs], gs[:hs])))
+
     xid = objective_id % 4
-    if xid < 3:
-        a = np.abs(n[3+xid] - gs[xid])
-        b = np.abs(s[3+xid] - gs[xid])
-    else:
-        a = np.abs(goal_distance(n[3:3+3], gs[:3]))
-        b = np.abs(goal_distance(s[3:3+3], gs[:3]))
+    if xid >= 3:
+        return -1 * (2 * CLOSE_ENOUGH < np.abs(goal_distance(s[ind:ind+hs], gs[:hs])))
+
+    a = np.abs(n[ind+xid] - gs[xid])
+    b = np.abs(s[ind+xid] - gs[xid])
     if b < CLOSE_ENOUGH:
         return 0.#3.
-#    if her: print("HER", a, b)
     return -1 + .9 * int(a < b)
 
 def sample_goal(goal, target, n_target):
@@ -65,7 +63,7 @@ def sample_goal(goal, target, n_target):
         hs = cfg['her_state_size']
         ind = -(len(goal) - hs) // cfg['history_count']
 #        return goal[ind:ind+hs]
-        for i in range(1):# be carefull extremly expensive
+        for i in range(3):# be carefull extremly expensive
             radius = np.abs(np.random.rand() * CLOSE_ENOUGH)
             angle = np.random.rand() * np.pi * 2
             a = np.cos(angle) * radius
@@ -196,7 +194,7 @@ class FetchNReachTask(Task):
         return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
 
     def wrap_action(self, x):
-        return (torch.sigmoid(x) - .5) * 2
+#        return (torch.sigmoid(x) - .5) * 2
         return torch.tanh(x)
         return torch.clamp(x, min=-1, max=+1)
 

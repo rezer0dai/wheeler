@@ -11,7 +11,7 @@ import torch.multiprocessing
 from torch.multiprocessing import Queue, SimpleQueue, Process
 
 class Simulation(torch.multiprocessing.Process):
-    def __init__(self, cfg, model, task, xid, shared_actor, model_actor, a_grads, keep_exploring, signal, drop):
+    def __init__(self, cfg, model, task, xid, shared_actor, model_actor, a_grads, keep_exploring, signal):
         super(Simulation, self).__init__()
 
         self.cfg = cfg
@@ -31,7 +31,7 @@ class Simulation(torch.multiprocessing.Process):
 
         self.batch_size = self.cfg['batch_size']
 
-        self.td_backdoor, self.keep_exploring, self.signal, self.drop = a_grads, keep_exploring, signal, drop
+        self.td_backdoor, self.keep_exploring, self.signal = a_grads, keep_exploring, signal
 
         self.done = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
         self.complete = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
@@ -79,20 +79,14 @@ class Simulation(torch.multiprocessing.Process):
                 break
             self._run(seeds)
 
-            for c in self.complete:
-                c.get()
-# dead lock scenario : another simulation offers more batches to review..
-            while any(not c.empty() for c in self.review):
-                if not self.drop.empty():#dead lock temporary fix ?
-                    break
-
-            for c in self.review:
-                while not c.empty():
+            for _ in seeds:
+                for c in self.complete:
                     c.get()
 
+            while any(not c.empty() for c in self.review):
+                pass
+
             self.signal.put(True) # sync
-# well this whole sync seems like overengineering of another magnitude, when refactoring do better design!!
-            self.drop.get()
 
         for c in self.done:
             c.put(True)
@@ -124,6 +118,7 @@ class Simulation(torch.multiprocessing.Process):
             features += [f_pi] * 1#self.cfg['history_count']
 
             done = False
+            self.learned = False
             while len(rewards) < self.max_n_episode:
 #                self._eval(self.td_backdoor)
 
@@ -156,8 +151,7 @@ class Simulation(torch.multiprocessing.Process):
 
                 score += reward * self.discount**len(rewards)
 
-                if 0 == self.xid:
-                    self._print_stats(e, rewards, a_pi)
+                self._print_stats(e, rewards, a_pi)
 
             self._do_full_ep_train(
                     states,
@@ -168,18 +162,25 @@ class Simulation(torch.multiprocessing.Process):
 
             self._print_stats(e, rewards, a_pi)
 
-#            if True:#any(c.empty() for c in self.review):
-#                self._run([s + 1 for s in seeds])
+#this round does not contributed to actors training, redo!
+            if not self.learned:
+                self._run([seed + 1])
 
     def _print_stats(self, e, rewards, a_pi):
+        debug_out = ""
+        if not self.stats[0].empty():
+            debug_out = self.stats[0].get()
+
+        self.learned = len(debug_out) > 0
+
+#        if 0 != self.xid:
+#            return
+
         if not self.cfg['dbgout']:
             print("\rstep:{:4d} :: {} [{}]".format(len(rewards), sum(rewards), self.count), end="")
-
-        if not self.cfg['dbgout'] or self.stats[0].empty():
-            return
-        debug_out = self.stats[0].get()
-        print("\r[{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
-            self.count, self.task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), a_pi, debug_out), end="")
+        else:
+            print("\r[{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
+                self.count, self.task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), a_pi, debug_out), end="")
 
     def _do_fast_train(self, states, features, actions, rewards, goods, delta):
         if delta % self.n_step:
@@ -289,8 +290,8 @@ class Simulation(torch.multiprocessing.Process):
             self._eval(self.td_backdoor)
 
     def _eval(self, td_gate):
-        if not td_gate.empty():
-            return
+#        if not td_gate.empty(): # no need to ask this, and in the end dead-lock issue
+#            return
         if any(c.empty() for c in self.review):
             return
 
