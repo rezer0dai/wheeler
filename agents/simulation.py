@@ -168,7 +168,7 @@ class Simulation(torch.multiprocessing.Process):
 
     def _print_stats(self, e, rewards, a_pi):
         debug_out = ""
-        if not self.stats[0].empty():
+        while not self.stats[0].empty():
             debug_out = self.stats[0].get()
 
         self.learned = self.learned or (len(debug_out) > 0)
