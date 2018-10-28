@@ -1,29 +1,29 @@
 device = "cpu"#"cuda"#
 tensor = "torch.DoubleTensor"#"torch.cuda.DoubleTensor"#
 model_path = "models_dtb"
-load = false
+load = false#true
 save = false
 dbgout = true#false#
 loss_debug = false#true
 
-n_step = 3
+n_step = 4
 n_critics = 1
-batch_size = 4
+batch_size = 24#12#1#4#
 discount_rate = 0.995
-disjoint_critics = true#false#
+disjoint_critics = true#false
 
 task = "MountainCarContinuous-v0"
 n_simulations = 1
 action_repeat = 1
 max_reward_val = +300
 min_reward_val = -300
-replay_size = 50000
-max_n_eps = 1000
-max_ep_draw_count = 100
+replay_size = 2000#last 7 full eps sounds like reasonable thrashold obsolete and new exp
+max_n_eps = 300#1000#
+max_ep_draw_count = 20#100
 
 mcts_rounds = 1
 mcts_random_cap = 1000000
-td_lambda_replay_count = 20
+td_lambda_replay_count = 20#0#
 
 reinforce_clip = false
 tau_clip = 0
@@ -31,19 +31,23 @@ tau_clip = 0
 lr_actor = 1e-3
 lr_critic = 1e-4
 
-tau_base = 1e-2
-tau_final = 9e-3
-tau_replay_counter = 10000
-tau_adapt = 1e-3
+tau_base = 1e-2#1#4e-1#
+tau_final = 9e-3#1#1e-1#
+tau_replay_counter = 6000
+#tau_base = 1
+#tau_final = 1
+#tau_replay_counter = 1
+#tau_adapt = 1
+
 actor_update_delay = 1
 critic_update_delay = 1
-critic_learn_delta = 1
+critic_learn_delta = 20#70#100#16#
 
 pg_mean = true#false#
 
 good_reach = 2
 advantages_enabled = true#false#
-advantages_boost = true#false#
+advantages_boost = false#true#
 normalize_advantages = false#true#
 
 attention_enabled = false#true#
@@ -52,10 +56,10 @@ attention_amplifier = 1.0
 
 max_n_step = -10000#1#
 
-replay_alpha = 0.0
+replay_alpha = 0.7
 replay_beta_iters = 6000
-replay_beta_base = 0.2
-replay_beta_top = 0.7
+replay_beta_base = 0.3
+replay_beta_top = 0.9
 replay_prio_eps = 1e-3
 
 #####################################
@@ -70,4 +74,18 @@ her_state_size = 0
 her_state_features = 0
 her_max_ratio = 0
 
+dbgout_train = true#false#
+fast_exp_epochs = 4
+ppo_eps = 2e-1
+loss_min = 1000# # well this depends on learning rate as well 
 
+dbgout_ratio = true#false#
+ddpg = true#false#
+
+replay_cleaning = true#false#
+prob_treshold = 3.0
+
+gae = false#true#
+gae_tau = 0.95
+
+replay_reanalyze = true#false#

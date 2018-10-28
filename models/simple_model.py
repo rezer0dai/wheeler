@@ -5,12 +5,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torch.distributions import Normal
+
 from utils.nes import *
+from utils.policy import *
 
 def initialize_weights(layer):
-    if type(layer) not in [nn.Linear, ]:
+    if not isinstance(layer, nn.Linear):
         return
-    print("OK", layer)
 #    nn.init.kaiming_uniform_(layer.weight)
     nn.init.xavier_uniform_(layer.weight)
 
@@ -24,7 +26,7 @@ class CriticNes(nn.Module):
         self.state_dim = cfg['her_state_size'] + task.state_size() * cfg['history_count']
         self.action_dim = task.action_size()
 
-        self.net = NoisyNet([self.state_dim + self.action_dim, 256, 256,  256, 1])
+        self.net = NoisyNet([self.state_dim + self.action_dim, 256, 256, 1])
 
         self.apply(initialize_weights)
 
@@ -53,13 +55,9 @@ class CriticNN(nn.Module):
         self.action_dim = task.action_size()
 
         self.net = nn.Sequential(
-                nn.Linear(self.state_dim + self.action_dim,256, bias=False),
+                nn.Linear(self.state_dim + self.action_dim,256),
                 nn.ReLU(),
-                nn.Linear(256,256, bias=False),
-                nn.ReLU(),
-                nn.Linear(256,256, bias=False),
-                nn.ReLU(),
-                nn.Linear(256,1, bias=False),
+                nn.Linear(256,1)
                 )
 
         self.apply(initialize_weights)
@@ -78,18 +76,15 @@ class ActorNN(nn.Module):
     def __init__(self, task, cfg):
         super(ActorNN, self).__init__()
 
+        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
+
         self.cfg = cfg
 
         self.state_dim = cfg['her_state_size'] + task.state_size() * cfg['history_count']
         self.action_dim = task.action_size()
-        self.wrap_action = task.wrap_action
 
         self.net = nn.Sequential(
-                nn.Linear(self.state_dim,256, bias=False),
-                nn.ReLU(),
-                nn.Linear(256,256, bias=False),
-                nn.ReLU(),
-                nn.Linear(256,256, bias=False),
+                nn.Linear(self.state_dim,256),
                 nn.ReLU(),
                 nn.Linear(256,self.action_dim, bias=False),
                 )
@@ -98,7 +93,7 @@ class ActorNN(nn.Module):
 
     def forward(self, state, _):
         self.features = torch.zeros(state.size(0), 1, self.cfg['history_features'])
-        return self.wrap_action(self.net(state))
+        return self.algo(self.net(state))
 
     def sample_noise(self):
         return
@@ -106,4 +101,6 @@ class ActorNN(nn.Module):
     def remove_noise(self):
         return
     def recomputable(self):
-        return False
+        return False#True#
+    def extract_features(self, states):
+        return torch.zeros(len(states), 1, 1, self.cfg['history_features'])

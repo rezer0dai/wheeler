@@ -5,19 +5,22 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torch.distributions import Normal
+
 import numpy as np
 
 from utils.nes import *
+from utils.policy import *
 
 def initialize_weights(layer):
-    if type(layer) not in [nn.Linear, ]:
+    if not isinstance(layer, nn.Linear):
         return
-    nn.init.kaiming_uniform_(layer.weight)
+    nn.init.xavier_uniform_(layer.weight)
 
 class ActorNN(nn.Module):
     def __init__(self, task, cfg):
         super(ActorNN, self).__init__()
-        self.wrap_action = task.wrap_action
+        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
         self.action_size = task.action_size()
         self.cfg = cfg
 
@@ -56,15 +59,15 @@ class ActorNN(nn.Module):
                             state[:, :self.cfg['her_state_size']]))
             x = torch.cat([x, her_state], dim=1)
 
-        return self.wrap_action(self.ex(x))
+        return self.algo(self.ex(x))
 
         x = F.relu(self.concat(x))
         x = self.output(x)
         return self.wrap_action(x)
 
     def sample_noise(self):
-        return
         self.ex.sample_noise()
+        return
         self.concat.sample_noise()
         self.output.sample_noise()
 
@@ -90,4 +93,4 @@ class ActorNN(nn.Module):
             feature = torch.cat(hidden, 1).view(1, 1, -1)
             features.append(feature.detach().cpu().numpy())
 
-        return features
+        return features[:-1]

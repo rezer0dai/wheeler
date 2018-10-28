@@ -5,14 +5,62 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torch.distributions import Normal
+
 import numpy as np
 
 from utils.nes import *
 
+from utils.policy import *
+
 def initialize_weights(layer):
-    if type(layer) not in [nn.Linear, ]:
+    if not isinstance(layer, nn.Linear):
         return
     nn.init.xavier_uniform_(layer.weight)
+
+class CriticQ(nn.Module):
+    def __init__(self, task, cfg):
+        super().__init__()
+
+        self.wrap_value = task.wrap_value
+        self.cfg = cfg
+
+        self.state_encode = nn.Linear(task.state_size() * cfg['history_count'], 128)
+
+        if cfg['her_state_size']:
+            self.goal_encode = nn.Linear(cfg['her_state_size'], cfg['her_state_features'])
+
+        self.q_approx = nn.Sequential(
+                nn.Linear(128 + cfg['her_state_features'] + cfg['history_features'], 256),
+                nn.ReLU(),
+                nn.Linear(256,128, bias=False),
+                nn.ReLU(),
+                nn.Linear(128, 1, bias=False)
+                )
+
+        self.apply(initialize_weights)
+
+    def forward(self, state, _, context):
+        if self.cfg['her_state_size']:
+            goal = state[:, :self.cfg['her_state_size']]
+
+        context = context.squeeze(0)
+        state = torch.tanh(self.state_encode(
+            state[:, self.cfg['her_state_size']:]))
+
+        state = torch.cat([state, context], dim=1)
+
+        if self.cfg['her_state_size']:
+            goal = torch.tanh(self.goal_encode(goal))
+            state = torch.cat([state, goal], dim=1)
+
+        x = self.q_approx(state)
+        return self.wrap_value(x)
+
+    def sample_noise(self):
+        return
+    def remove_noise(self):
+        return
 
 class CriticNN(nn.Module):
     def __init__(self, task, cfg):
@@ -20,8 +68,6 @@ class CriticNN(nn.Module):
 
         self.wrap_value = task.wrap_value
         self.cfg = cfg
-
-        total_size = cfg['history_count'] * task.state_size() + cfg['her_state_size'] + task.action_size()
 
         self.state_encode = nn.Linear(
                 task.state_size() * cfg['history_count'] + task.action_size()
@@ -45,7 +91,7 @@ class CriticNN(nn.Module):
             goal = state[:, :self.cfg['her_state_size']]
 
         context = context.squeeze(0)
-        state = F.tanh(self.state_encode(
+        state = torch.tanh(self.state_encode(
             torch.cat([action,
             state[:, self.cfg['her_state_size']:]
             ], dim = 1)))
@@ -53,7 +99,7 @@ class CriticNN(nn.Module):
         state = torch.cat([state, context], dim=1)
 
         if self.cfg['her_state_size']:
-            goal = F.tanh(self.goal_encode(goal))
+            goal = torch.tanh(self.goal_encode(goal))
             state = torch.cat([state, goal], dim=1)
 
         x = self.q_approx(state)
@@ -68,10 +114,10 @@ class CriticNN(nn.Module):
 class ActorNN(nn.Module):
     def __init__(self, task, cfg):
         super().__init__()
-        self.wrap_action = task.wrap_action
         self.cfg = cfg
 
-# handle Normalization vs obsolete feature vector in replay buffer
+        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
+
         self.state_size = task.state_size()
 
         self.rnn = nn.GRU(
@@ -85,14 +131,12 @@ class ActorNN(nn.Module):
         if self.cfg['her_state_size']:
             self.her_state = nn.Linear(cfg['her_state_size'], cfg['her_state_features'])
 
-        total_size = cfg['her_state_features'] + cfg['history_features']
-
         self.ex = NoisyLinear(cfg['her_state_features'] + cfg['history_features'], task.action_size())
+#        self.ex = nn.Linear(cfg['her_state_features'] + cfg['history_features'], task.action_size(), bias=False)
 
         self.features = None
 
         self.apply(initialize_weights)
-
 
     def forward(self, state, history):
         x = state[:, self.cfg['her_state_size']:]
@@ -105,13 +149,15 @@ class ActorNN(nn.Module):
 
         x = hidden.view(state.size(0), -1)
         if self.cfg['her_state_size']:
-            her_state = F.tanh(self.her_state(
+            her_state = torch.tanh(self.her_state(
                             state[:, :self.cfg['her_state_size']]))
             x = torch.cat([x, her_state], dim=1)
 
-        return self.wrap_action(self.ex(x))
+        x = self.ex(x)
+        return self.algo(x)
 
     def sample_noise(self):
+#        return
         self.ex.sample_noise()
 
     def remove_noise(self):
@@ -140,4 +186,4 @@ class ActorNN(nn.Module):
             _, hidden = self.rnn(x, hidden)
             features.append(hidden.detach().cpu().numpy())
 
-        return features
+        return features[:-1]

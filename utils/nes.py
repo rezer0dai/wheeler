@@ -31,7 +31,7 @@ class NoisyLinear(nn.Linear):
 
 class NoisyNet(nn.Module):
     def __init__(self, layers):
-        super(NoisyNet, self).__init__()
+        super().__init__()
         # TODO : properly expose interface to remove/select noise in selective way
         self.layers = [ NoisyLinear(layer, layers[i+1]) for i, layer in enumerate(layers[:-1]) ]
 

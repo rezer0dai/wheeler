@@ -15,10 +15,11 @@ import threading, math, os
 
 #from linear_model import CriticNN
 #from linear_model import ActorNN
-#from simple_model import CriticNN
-#from simple_model import ActorNN
+from simple_model import CriticNN
+from simple_model import ActorNN
 
-from lstm_model import ActorNN
+#from gru_model import CriticQ as CriticNN
+#from lstm_model import ActorNN
 #from gru_model import CriticGRU as CriticNN
 from gru_model import CriticNN
 from gru_model import ActorNN
@@ -32,12 +33,7 @@ class SoftUpdateNetwork:
     def soft_update(self, tau):
         if not tau:
             return
-        """
-        # get little from local~new, and most from stable~old
-        basically copied from : https://github.com/vy007vikas/PyTorch-ActorCriticRL/blob/master/utils.py
-         ~ optimized copy-ing ( in comparsion to ModelKeras )
-         ~ also more readable syntax ( than i have before ) "model*(1-tau) + local*tau" is somehow clean to understand :)
-        """
+
         for target_w, explorer_w in zip(self.target.parameters(), self.explorer.parameters()):
             target_w.data.copy_(
                 target_w.data * (1. - tau) + explorer_w.data * tau)
@@ -82,10 +78,6 @@ class ActorNetwork(SoftUpdateNetwork):
                 self.explorer.parameters() if not self.attention else list(self.explorer.parameters()) + list(self.attention.parameters()),
                 cfg['lr_actor'])
 
-    def reset(self):
-#        return
-        self.explorer.sample_noise()
-
     def fit(self, states, advantages, actions, tau):
         states = torch.DoubleTensor(states).to(self.device)
         actions = torch.DoubleTensor(actions).to(self.device)
@@ -95,9 +87,18 @@ class ActorNetwork(SoftUpdateNetwork):
             if self.attention:
                 grads = self.attention(grads, states, actions)
 
-            pgd_loss = grads.sum() if not self.cfg['pg_mean'] else grads.mean()
+            pgd_loss = grads.mean() if self.cfg['pg_mean'] else grads.sum()
 
-            print("\n(*) train>>", states.shape, pgd_loss)
+            # safety checks
+            pgd_loss = -torch.clamp(pgd_loss, min=-self.cfg['loss_min'], max=self.cfg['loss_min'])
+            if pgd_loss != pgd_loss: # is nan!
+                return
+            if pgd_loss.abs() < 1e-5:
+                return
+
+            # debug out
+            if self.cfg['dbgout_train']:
+                print("\n(*) train>>", states.shape, pgd_loss, tau)
             if self.cfg['loss_debug']:
                 losses.append(pgd_loss.detach().cpu().numpy())
                 with open('losses.pickle', 'wb') as l:
@@ -122,9 +123,9 @@ class ActorNetwork(SoftUpdateNetwork):
             history.reshape(1, states.size(0), -1))).to(self.device)
 
         with self.lock:
-            actions = self.explorer(states, history)
+            dist = self.explorer(states, history)
             features = self.explorer.features
-            return actions, features
+            return dist, features
 
     def predict_future(self, states, history):
         states = torch.DoubleTensor(torch.from_numpy(
@@ -133,9 +134,9 @@ class ActorNetwork(SoftUpdateNetwork):
             history.reshape(1, states.size(0), -1))).to(self.device)
 
         with self.lock:
-            actions = self.target(states, history).detach().cpu().numpy()
-            features = self.target.features.detach().cpu().numpy()
-            return actions, features
+            dist = self.target(states, history)
+            features = self.target.features
+            return dist, features
 
     @staticmethod
     def new(task, cfg):

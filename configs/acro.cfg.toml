@@ -71,3 +71,13 @@ history_features = 64
 her_state_size = 1
 her_state_features = 64
 her_max_ratio = 3
+
+dbgout_train = false#true#
+fast_exp_epochs = 4
+ppo_eps = 2e-1
+loss_min = 1000
+
+dbgout_ratio = true#false#
+ddpg = true#false#
+
+replay_cleaning = false#true#

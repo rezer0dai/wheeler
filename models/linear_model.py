@@ -5,12 +5,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torch.distributions import Normal
+
 from utils.nes import NoisyLinear
+from utils.policy import *
 
 def initialize_weights(layer):
-    if type(layer) not in [nn.Linear, ]:
+    if not isinstance(layer, nn.Linear):
         return
-    nn.init.kaiming_uniform_(layer.weight)
+    nn.init.xavier_uniform_(layer.weight)
 
 class CriticNN(nn.Module):
 
@@ -53,17 +56,18 @@ class ActorNN(nn.Module):
 
     def __init__(self, task, cfg):
         super(ActorNN, self).__init__()
+        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
 
         self.cfg = cfg
 
         self.state_dim = cfg['her_state_size'] + task.state_size() * cfg['history_count']
         self.action_dim = task.action_size()
-        self.wrap_action = task.wrap_action
 
         self.fc1 = nn.Linear(self.state_dim,256)
         self.fc2 = nn.Linear(256,128)
         self.fc3 = NoisyLinear(128,64)
         self.fc4 = NoisyLinear(64,self.action_dim)
+
         self.apply(initialize_weights)
 
     def forward(self, state, _):
@@ -72,7 +76,7 @@ class ActorNN(nn.Module):
         x = F.relu(self.fc3(x))
 
         self.features = torch.zeros(state.size(0), 1, self.cfg['history_features'])
-        return self.wrap_action(self.fc4(x))
+        return self.algo(self.fc4(x))
 
     def sample_noise(self):
         self.fc4.sample_noise()

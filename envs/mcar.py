@@ -20,29 +20,7 @@ torch.set_default_tensor_type(cfg['tensor'])
 
 from agents.zer0bot import Zer0Bot
 
-import sklearn.pipeline
-import sklearn.preprocessing
-from sklearn.kernel_approximation import RBFSampler
-
-class State:
-    def __init__(self, env):
-#        return
-        observation_examples = np.array([env.observation_space.sample() for x in range(10000)])
-        self.scaler = sklearn.preprocessing.StandardScaler()
-        self.scaler.fit(observation_examples)
-
-        self.featurizer = sklearn.pipeline.FeatureUnion([
-                ("rbf1", RBFSampler(gamma=5.0, n_components=100)),
-                ("rbf2", RBFSampler(gamma=2.0, n_components=100)),
-                ("rbf3", RBFSampler(gamma=1.0, n_components=100)),
-                ("rbf4", RBFSampler(gamma=0.5, n_components=100))
-                ])
-        self.featurizer.fit(self.scaler.transform(observation_examples))
-    def transform(self, state):
-#        return state#
-        scaled = self.scaler.transform([state])
-        featurized = self.featurizer.transform(scaled)
-        return featurized[0]
+from utils.rbf import *
 
 from utils.task import Task
 from utils.curiosity import *
@@ -119,34 +97,38 @@ def main():
     print(cfg)
 
     import agents.ModelTorch as ModelTorch
-    encoder = State(gym.make(cfg['task']))
-
+    encoder = State(gym.make(cfg['task']), [5., 2., 1., .5], [20] * 4)
+    task = MCarTask(cfg, encoder)
     counter = 0
     while True:
         counter += 1
         bot = Zer0Bot(
-            cfg,
-            MCarTask(cfg, encoder), # task "manager"
+            0, cfg,
+            task, # task "manager"
             ModelTorch.ActorNetwork,
             ModelTorch.CriticNetwork)
 
         bot.start()
 
         z = 0
-        ROUNDS = 1
-        bot.task_main.training_status(False)
-        while not bot.task_main.learned():
-            bot.train(ROUNDS)
+        task.training_status(False)
+        while not task.learned():
+            bot.train()
             print()
-            bot.task_main.training_status(
-                    all(bot.task_main.test_policy(bot, True)[0] for _ in range(10)))
+            task.training_status(
+                    all(task.test_policy(bot, True)[0] for _ in range(10)))
             z+=1
 
         print("\n")
         print("="*80)
-        print("training over", counter, z * bot.task_main.subtasks_count() * ROUNDS)
+        print("training over", counter, z * bot.task_main.subtasks_count() * cfg['mcts_rounds'])
         print("="*80)
-        for i in range(10): print("total steps : ", len(bot.task_main.test_policy(bot, True)[2]))
+
+        for i in range(10): print("total steps : %i < training : %i :: %i >"%(
+            counter, 
+            z * cfg['mcts_rounds'] * task.subtasks_count(), 
+            len(task.test_policy(bot, True)[2])))
+
         while True: bot.task_main.test_policy(bot, True)
         break
 

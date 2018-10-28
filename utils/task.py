@@ -48,21 +48,23 @@ class Task(object, metaclass=abc.ABCMeta):
             return "cuda"
         return "cuda:%i"%(1 + (self.xid % (torch.cuda.device_count() - 1)))
 
-    def make_replay_buffer(self, cfg, actor):
+    def make_replay_buffer(self, cfg):
         buffer_size = self.cfg['replay_size']
-        return ReplayBuffer(cfg, self.xid, actor)
+        return ReplayBuffer(cfg, self.xid)
 
     def step(self, action):
         r = 0
         for i, act in enumerate(action):
             for _ in range(self.cfg['action_repeat']):
                 Task.ep_count += int(0 == self.xid)
-
+                act = np.clip(act, self.action_low, self.action_high)
                 a, state, reward, done, good = self.step_ex(act)
                 r += reward
                 if done:
                     break
-            action[i] = a
+            if any(a != act): # user want to change this action ( wrt gradient for training )
+                print("#"*100, "ACTION CHANGED", action[i], a, act)
+                action[i] = a
             #self.prev_state = self.env.pose
             if done:
                 break
@@ -92,7 +94,8 @@ class Task(object, metaclass=abc.ABCMeta):
             if render:
                 self.env.render()
 
-            action, state, reward, done, _ = self.step_ex(a, True)
+            a = np.clip(a, self.action_low, self.action_high).cpu().numpy()
+            _, state, reward, done, _ = self.step_ex(a, True)
 
             states.append(state)
             rewards.append(reward)
@@ -151,8 +154,11 @@ class Task(object, metaclass=abc.ABCMeta):
         state = self.env.reset()
         return state
 
+    def update_goal(self, rewards, states, updates):
+        return rewards
+
     @abc.abstractmethod
-    def new(self, _):
+    def new(self):
         return self
 
     @abc.abstractmethod

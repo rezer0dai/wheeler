@@ -61,8 +61,8 @@ class PendelumTask(Task):
         return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
 
     def wrap_action(self, x):
+        return torch.clamp(x, min=-2, max=+2)
         return F.tanh(x) * 2
-        return torch.clamp(x, min=-1, max=+1)
 
     def goal_met(self, states, rewards, n_steps):
         print("TEST ", sum(rewards))
@@ -77,6 +77,7 @@ def main():
 
         counter += 1
         bot = Zer0Bot(
+            0,
             cfg,
             PendelumTask(cfg), # task "manager"
             ModelTorch.ActorNetwork,
@@ -85,10 +86,9 @@ def main():
         bot.start()
 
         z = 0
-        ROUNDS = 5
         bot.task_main.training_status(False)
         while not bot.task_main.learned():
-            bot.train(ROUNDS)
+            bot.train()
             print()
             bot.task_main.training_status(
                     all(bot.task_main.test_policy(bot, True)[0] for _ in range(10)))

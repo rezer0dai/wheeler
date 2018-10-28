@@ -13,8 +13,9 @@ from torch.multiprocessing import Queue, SimpleQueue
 from baselines.common.schedules import LinearSchedule
 
 class Zer0Bot:
-    def __init__(self, cfg, task, model_actor, model_critic):
+    def __init__(self, bot_id, cfg, task, model_actor, model_critic):
         self.cfg = cfg
+        self.bot_id = bot_id
 
         self.task_main = task
         self.n_step = self.cfg['n_step']
@@ -28,7 +29,7 @@ class Zer0Bot:
         self._setup_critics(model_critic, model_actor)
 
     def _setup_actor(self, model):
-        self.actor = Actor(model.new(self.task_main, self.cfg))
+        self.actor = Actor(model.new(self.task_main, self.cfg), self.cfg)
         self.actor.share_memory()
 
     def _setup_critics(self, model, model_actor):
@@ -36,21 +37,21 @@ class Zer0Bot:
             Queue(), SimpleQueue(), Queue()) for i in range(self.task_main.subtasks_count())])
 
         self.simulations = [Simulation(
-                self.cfg, model, self.task_main, i, self.actor, model_actor,
+                self.cfg, model, self.task_main, self.bot_id, i + 1, self.actor, model_actor,
                 self.td_gate[i], self.mcts_timeout[i], self.signal[i]
                 ) for i in range(self.task_main.subtasks_count())]
 
     def act(self, state, history):# get exploitation action ( stable actor )
         a, history = self.actor.predict(state, history)
 #        a, history = self.actor.get_action_wo_grad(state, history)
-        return (a, history)
+        return (torch.tensor(a), history)
 
     def start(self):
         for c in self.simulations:
             c.turnon()
             c.start()
 
-    def train(self, n_episodes):
+    def train(self):
         #  seed = [random.randint(0, self.cfg['mcts_random_cap'])] * self.cfg['mcts_rounds']
         for c in self.mcts_timeout: # maybe we want to * n_episodes ...
             c.put([random.randint(0, self.cfg['mcts_random_cap'])] * self.cfg['mcts_rounds'])
@@ -62,16 +63,16 @@ class Zer0Bot:
             s.get()
 
     def _train_worker(self):
+        time.sleep(.1)
 #        time.sleep(self.cfg["learn_loop_to"])
         status = self._update_policy(self.tau.value(self.counter))
         if not status:
             return
         self.counter += 1
-        self.actor.reset()
 
-    def _get_grads(self, simulation, s_a_td):
-        s, a, w = simulation.q_a_function(*s_a_td)
-        return s, a, torch.stack(w).mean(0) # this is problematic if we want to use keras ?
+    def _get_grads(self, simulation, s_p_td_a):
+        s, w, a = simulation.q_a_function(*s_p_td_a)
+        return s, w, a
 
     def _update_policy(self, tau):
 # here is potential dead-lock; not everytime every critic push same number of batches to review!!
@@ -81,30 +82,20 @@ class Zer0Bot:
 
 # hmm this trick with td_backdoor instead of td_gate[i] is rather cryptic .. TODO : refactor ..
 # imho incosisten naming with zer0bot and simulation .. fix as well ..
-        states, actions, advantages = zip(*map(
+        states, grads, actions = zip(*map(
             lambda c: self._get_grads(c, c.td_backdoor.get()), self.simulations))
 
         if self.cfg["attention_enabled"]:
             # ok we will scatter additional info which is hard to be weighted w/o additional info
-            gran = min(map(len, advantages))
+            gran = min(map(len, grads))
             states = np.vstack([s[:gran] for s in states])
             actions = np.vstack([a[:gran] for a in actions])
-            advantages = torch.stack([v[:gran] for v in advantages])
+            grads = torch.cat([g[:gran] for g in grads])
         else:
             states = np.vstack(states)
             actions = np.vstack(actions)
-            advantages = torch.cat(advantages)
+            gards = torch.cat(grads)
 
-        advantages = self._normalize(advantages)
-        self.actor.learn(states, advantages, actions,
-                tau * (0 == self.counter % self.cfg['actor_update_delay']))
+        tau = 1. if not self.cfg['ddpg'] else tau * (0 == self.counter % self.cfg['actor_update_delay'])
+        self.actor.learn(states, gards, actions, tau)
         return True
-
-    def _normalize(self, advantages):
-        """
-        work over standard mean, to avoid unecessary chaos in policy, source from OpenAI
-        """
-        if not self.cfg['normalize_advantages']:
-            return advantages
-        normalize = lambda a: (a - a.mean()) / a.std()
-        return normalize(advantages)

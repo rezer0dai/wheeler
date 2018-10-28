@@ -7,7 +7,7 @@ Why Wheeler ?
 
 Features & Ideas of Wheeler experiment : 
 ===
-0. Actor-Critic, Off-Policy, Asynchronous, DDPG, GAE, GRU/LSTM, Noisy Networks, OpenAi-Gym + Unity-MlAgents, PyTorch
+0. Actor-Critic, Off-Policy, Asynchronous, DDPG, PPO, vanilla PG, td-lambda, RBF, GAE, GRU/LSTM, Noisy Networks, OpenAi-Gym + Unity-MlAgents, PyTorch
 
 1. scaling : one actor vs multiple critics, every critic ( simulation ) has its own environment to test in parallel
 2. MULTIPLE GOALS : Via separating critics, you are able to define multiple reward functions ( preferable as sparse as possible )

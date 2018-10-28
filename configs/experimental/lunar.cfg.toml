@@ -6,7 +6,7 @@ save = true
 dbgout = true#false#
 loss_debug = false
 
-n_step = 4              # reduce variance, how many rewards we take into account at critic predictions, but increasing bias a little by little
+n_step = 1              # reduce variance, how many rewards we take into account at critic predictions, but increasing bias a little by little
 n_critics = 1           # how many critics we want per task, must be < than n_step ( temporary limitation ~ lazyness )
 batch_size = 32         # for one critic! therefore real full batch = batch_size * n_critics * n_simulations(this is given by task)
 discount_rate = 0.9#95   # rewards discount factor
@@ -70,3 +70,19 @@ history_features = 64
 her_state_size = 0
 her_state_features = 0
 her_max_ratio = 0
+
+dbgout_train = true#false#
+fast_exp_epochs = 4
+ppo_eps = 2e-1
+loss_min = 1000
+
+dbgout_ratio = true#false#
+ddpg = false#true#
+
+replay_cleaning = false#true#
+prob_treshold = 3.0
+
+gae = true#false#
+gae_tau = 0.95
+
+replay_reanalyze = true#false#
