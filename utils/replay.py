@@ -24,11 +24,13 @@ class ReplayBuffer:
         self.mem = Memory(cfg['replay_size'], cfg['batch_size'], cfg['replay_alpha'])
 
     def sample(self, batch_size, critic):
-        self.inds, data = zip(*self._sample(batch_size, critic))
+        try:
+            self.inds, data = zip(*self._sample(batch_size, critic))
+        except:
+            return None
 # lol TODO : kick off numpy vstack transpose
         data = np.vstack(data)
-#        print("-> new sample :", np.hstack(self.inds).shape, [i[0] for i in self.inds], data.shape)
-        return data.T
+        return (data.T)
 
     def add(self, batch, prios, delta):
 # if task is so hard to not do at least n_step per episode, then rethink different strategy ...
@@ -64,10 +66,7 @@ class ReplayBuffer:
     def _sample(self, batch_size, critic):
         done = False
         while not done:
-            try:
-                batch, _, inds = self.mem.select(self.beta.value(self.count))
-            except:
-                continue
+            batch, _, inds = self.mem.select(self.beta.value(self.count))
             data, local_forward, local_backward, delta = zip(*batch)
 
             self.count += 1

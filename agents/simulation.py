@@ -119,7 +119,7 @@ class Simulation(torch.multiprocessing.Process):
             for s in [np.zeros(len(state))] * self.cfg['history_count']:
                 history.append(np.vstack(s))
 
-            features += [f_pi] * 1#self.cfg['history_count']
+            features += [f_pi] * 1
 
             done = False
             while len(rewards) < self.max_n_episode:
@@ -143,7 +143,6 @@ class Simulation(torch.multiprocessing.Process):
 
                 # here is action instead of a_pi on purpose ~ let user tell us what action he really take!
                 actions.append(action)
-                features.append(f_pi)
                 probs.append(prob)
                 rewards.append(reward)
                 states.append(state)
@@ -159,13 +158,15 @@ class Simulation(torch.multiprocessing.Process):
                         goods[-exp_delta:],
                         e + len(states))
 
+                features.append(f_pi)
+
                 score += reward * self.discount**len(rewards)
 
                 self._print_stats(e, rewards, a_pi)
 
             self._do_full_ep_train(
                     states,
-                    features[:-1],#-self.cfg['history_count']],
+                    features,
                     actions, probs, rewards, goods, state, e)
 
             self.best_max_step = max(self.best_max_step, np.sign(self.cfg['max_n_step']) * len(rewards))
@@ -182,11 +183,11 @@ class Simulation(torch.multiprocessing.Process):
 
     def _print_stats(self, e, rewards, a_pi):
         debug_out = ""
-        if not self.stats[0].empty():
+        while not self.stats[0].empty():
             debug_out = self.stats[0].get()
 
-#        if 0 != self.objective_id:
-#            return
+        if 0 != self.objective_id:
+            return
 
         if not self.cfg['dbgout']:
             print("\rstep:{:4d} :: {} [{}]".format(len(rewards), sum(rewards), self.count), end="")
@@ -229,7 +230,7 @@ class Simulation(torch.multiprocessing.Process):
 
         states += [final_state] * self.n_step
         actions += [actions[-1]] * self.n_step
-        features += [features[-1]] * self.n_step#[np.zeros(shape=features[0].shape)] * self.n_step
+        features += [features[-1]] * (self.n_step - 1)
         rewards += [0.] * self.n_step
 
         #filter only those from what we learned something ...
@@ -321,5 +322,4 @@ class Simulation(torch.multiprocessing.Process):
             # get some reviewed data
             td_targets = [critic.get() for critic in self.td_gate] # arguments
 
-#        td_gate.put([a0, p0, s, f0, n, an, fn, td_targets, r])
         td_gate.put([a0, p0, s, f0, td_targets])

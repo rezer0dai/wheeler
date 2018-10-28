@@ -194,7 +194,7 @@ class Critic(torch.multiprocessing.Process):
         for _ in range(self.cfg['td_lambda_replay_count']):
             samples = self._select()
             if None == samples:
-                break
+                continue
             self.review.put(samples.T)
         self.complete.put(True)
 
@@ -203,7 +203,10 @@ class Critic(torch.multiprocessing.Process):
                     random.sample(range(len(states)), random.randint(1, len(states) - 1))])
         if len(self.replay) < self.batch_size:
             return None
-        s, _, _, _, _, n, _, _ = self.replay.sample(self.batch_size, None)
+        data = self.replay.sample(self.batch_size, None)
+        if None == data:
+            return None
+        s, _, _, _, _, n, _, _ = data
         self.task.update_normalizer(s)
         self.task.update_normalizer(n)
 
@@ -295,8 +298,12 @@ class Critic(torch.multiprocessing.Process):
             return self._locked_select()
 
     def _locked_select(self):
-        states, _, actions, probs, features, n_states, n_rewards, n_features = self.replay.sample(
-                self.batch_size, self if not self.cfg['disjoint_critics'] else None) # we can not re-evaluate on incomplete episode data ...
+        data = self.replay.sample(
+                    self.batch_size, self if not self.cfg['disjoint_critics'] else None) # we can not re-evaluate on incomplete episode data ...
+        if None == data:
+            return None
+        states, _, actions, probs, features, n_states, n_rewards, n_features = data
+
         if not len(actions):
             return None
 
