@@ -22,8 +22,9 @@ class Simulation(torch.multiprocessing.Process):
         super(Simulation, self).__init__()
 
         self.cfg = cfg
+        self.bot_id = bot_id
         self.objective_id = objective_id
-        self.task = task_info.new(bot_id, self.objective_id)
+        self.task = task_info.new(self.cfg, bot_id, self.objective_id)
 
         self.actor = shared_actor
 #        self.master_actor = shared_actor
@@ -198,8 +199,8 @@ class Simulation(torch.multiprocessing.Process):
         if not self.cfg['dbgout']:
             print("\rstep:{:4d} :: {} [{}]".format(len(rewards), sum(rewards), self.count), end="")
         else:
-            print("\r[{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
-                self.count, self.task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), a_pi, debug_out), end="")
+            print("\r[{:d}//{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
+                self.bot_id, self.count, self.task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), a_pi, debug_out), end="")
 
     def _do_fast_train(self, states, features, actions, probs, rewards, goods, delta):
         if (delta - self.n_step) % self.delta_step:

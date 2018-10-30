@@ -9,8 +9,8 @@ from torch.multiprocessing import SimpleQueue
 CFG = toml.loads(open('cfg.toml').read())
 ENV = UnityEnvironment(file_name=CFG['task'])
 BRAIN_NAME = ENV.brain_names[0]
-def _reset(cfg):
-    return ENV.reset(config=cfg[0], train_mode=True)[BRAIN_NAME]
+def _reset(cfg):#config=cfg[0], 
+    return ENV.reset(train_mode=True)[BRAIN_NAME]
 def _step(action):
     return ENV.step(np.asarray(action).reshape(-1))[BRAIN_NAME]
 CONTROL = { "reset" : _reset, "step" : _step }
@@ -47,7 +47,6 @@ class UnityBrain:
 
 class UnityGroupSync:
     def __init__(self, num):
-        print("GROUP CREATING!!")
         self.lock = threading.RLock()
         self.pipes = [SimpleQueue() for _ in range(num)]
         self.counter = { "reset" : [], "step" : [] }

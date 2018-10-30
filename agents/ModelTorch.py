@@ -61,8 +61,8 @@ class SoftUpdateNetwork:
         if not os.path.exists(target) or not os.path.exists(explorer):
             return
 
-        self.target.load_state_dict(torch.load(target))
-        self.explorer.load_state_dict(torch.load(explorer))
+        self.target.load_state_dict(torch.load(target), strict=False)
+        self.explorer.load_state_dict(torch.load(explorer), strict=False)
 
     def _save_models(self, cfg, model_id, prefix):
         if not cfg['save']:
@@ -105,6 +105,11 @@ class ActorNetwork(SoftUpdateNetwork):
 
         self._load_models(self.cfg, self.actor_id, "actor")
 
+    def beta_sync(self):
+        # basically we using ppo as our explorer of close unknown
+        self._load_models(self.cfg, 0, "actor")
+        self.soft_update(1.)
+
     def fit(self, states, advantages, actions, tau):
         states = torch.DoubleTensor(states).to(self.device)
         actions = torch.DoubleTensor(actions).to(self.device)
@@ -125,7 +130,7 @@ class ActorNetwork(SoftUpdateNetwork):
 
             # debug out
             if self.cfg['dbgout_train']:
-                print("\n(*) train>>", states.shape, pgd_loss, tau)
+                print("\n(*) train>>", states.shape, pgd_loss, tau, self.actor_id)
             if self.cfg['loss_debug']:
                 losses.append(pgd_loss.detach().cpu().numpy())
                 with open('losses.pickle', 'wb') as l:

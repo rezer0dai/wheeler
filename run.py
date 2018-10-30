@@ -5,5 +5,4 @@ def watchdog():
     os.system("sh reset")
 
 threading.Thread(target=watchdog).start()
-#os.system("python ddpg_reacher.py")
-os.system("python reacher.py")
+os.system("python envs/reacher.py")

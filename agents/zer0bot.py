@@ -8,12 +8,14 @@ from agents.simulation import Simulation
 import torch
 from torch.autograd import Variable
 import torch.multiprocessing
-from torch.multiprocessing import Queue, SimpleQueue
+from torch.multiprocessing import Queue, SimpleQueue, Process
 
 from baselines.common.schedules import LinearSchedule
 
-class Zer0Bot:
+class Zer0Bot(Process):
     def __init__(self, bot_id, cfg, task_info, model_actor, model_critic):
+        super().__init__()
+
         self.cfg = cfg
         self.bot_id = bot_id
 
@@ -23,6 +25,8 @@ class Zer0Bot:
         self.tau = LinearSchedule(cfg['tau_replay_counter'],
                initial_p=self.cfg['tau_base'],
                final_p=cfg['tau_final'])
+
+        self.stop = SimpleQueue()
 
         self._setup_actor(model_actor, task_info)
         self._setup_critics(model_critic, model_actor, task_info)
@@ -38,17 +42,22 @@ class Zer0Bot:
         self.simulations = [Simulation(
                 self.cfg, model_critic, task_info, self.bot_id, i + 1, self.actor, model_actor,
                 self.td_gate[i], self.mcts_timeout[i], self.signal[i]
-                ) for i in range(task_info.cfg['n_simulations'])]
+                ) for i in range(self.cfg['n_simulations'])]
 
     def act(self, state, history):# get exploitation action ( stable actor )
         a, history = self.actor.predict(state, history)
 #        a, history = self.actor.get_action_wo_grad(state, history)
         return (a, history)
 
-    def start(self):
+    def turnon(self):
         for c in self.simulations:
             c.turnon()
             c.start()
+
+    def run(self):
+        while self.stop.empty():
+            self.train()
+        self.stop.get()
 
     def train(self):
         #  seed = [random.randint(0, self.cfg['mcts_random_cap'])] * self.cfg['mcts_rounds']

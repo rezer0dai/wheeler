@@ -56,7 +56,7 @@ def ppo(diff, loss, eps):
         + using grads from policy probabilities, clamping them... 
         - however not efficient to use with replay buffer ( past action obsolete, ratio always clipped )
     """
-    print("PPO")
+#    print("PPO")
 
     ratio = diff.exp()
 

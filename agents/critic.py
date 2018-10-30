@@ -19,7 +19,7 @@ class Critic(torch.multiprocessing.Process):
             stop, exps, review, comitee, grads, stats, complete, 
             actor):
 
-        super(Critic, self).__init__()
+        super().__init__()
 
         self.actor = actor
 
@@ -55,7 +55,7 @@ class Critic(torch.multiprocessing.Process):
                final_p=cfg['tau_final'])
 
         self.lock = threading.RLock() # we protect only write operations ~ yeah yeah not so good :)
-        self.replay = task.make_replay_buffer(cfg)
+        self.replay = task_info.make_replay_buffer(self.cfg, task.objective_id)
 
         self.model = model.new(task_info, self.device, self.cfg, "%i_%i_%i"%(bot_id, task.objective_id, xid))
         self.model.share_memory()
@@ -206,6 +206,8 @@ class Critic(torch.multiprocessing.Process):
         self.complete.put(True)
 
     def _update_normalizer(self, states):
+        """ well this may race and mess up with other critics, but for now it is OK
+        """
         self.task.update_normalizer(states[
                     random.sample(range(len(states)), random.randint(1, len(states) - 1))])
         if len(self.replay) < self.batch_size:
@@ -234,7 +236,7 @@ class Critic(torch.multiprocessing.Process):
                     n_states[i],
                     n_rewards[i],
                     n_features[i]), range(len(states))),
-                prios, delta)
+                prios, delta, hash(states.tostring()))
         self.curiosity.update(s_norm, n_norm, actions)
 
     def _eval(self, args):
@@ -310,7 +312,6 @@ class Critic(torch.multiprocessing.Process):
         if None == data:
             return None
         states, _, actions, probs, features, n_states, n_rewards, n_features = data
-
         if not len(actions):
             return None
 
@@ -320,7 +321,7 @@ class Critic(torch.multiprocessing.Process):
         prios = self.curiosity.weight(s_norm, n_norm, actions)
         if self.cfg['replay_cleaning']:
  # seems we are bit too far for PG to do something good, replay buffer should abandond those
-            prios[self.cfg['prob_treshold'] < np.abs(probs)] = 0
+            prios[self.cfg['prob_treshold'] < np.abs(np.vstack(probs).mean(-1))] = 0
 
         self.replay.update(prios)
 
@@ -353,14 +354,14 @@ class Critic(torch.multiprocessing.Process):
         actions = [e[0][2] for e in episode]
         f, p = self.actor.reevaluate(s_norm, actions)
 
-        rewards, s, n_s = np.asarray(self.task.update_goal(
+        rewards, s, n_s = self.task.update_goal(
             *zip(*[( # magic *
                 e[0][1], # rewards .. just so he can forward it to us back
                 e[0][0], # states .. 
                 e[0][5], # states .. 
 #                e[0][2], # action .. well for now no need, however some emulator may need them
                 bool(random.randint(0, self.cfg['her_max_ratio'])), # update or not
-                ) for i, e in enumerate(episode)])))
+                ) for e in episode]))
 
         n = policy.td_lambda(rewards, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
                 rewards, 
