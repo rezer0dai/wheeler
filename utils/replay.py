@@ -7,13 +7,10 @@ from PrioritizedExperienceReplay.proportional import Experience as Memory
 from baselines.common.schedules import LinearSchedule
 
 class ReplayBuffer:
-    def __init__(self, cfg, objective_id, update_goal = None):
+    def __init__(self, cfg, objective_id):
         self.cfg = cfg
 
-        assert None != update_goal or cfg['her_max_ratio'] == 0, "we dont update goals in non-HER games, therefore her_max_ratio must be 0 or her_state_size must be > 0"
-
         self.objective_id = objective_id # identifier for fun_reward ~ our objective function id basically
-        self.update_goal = update_goal
 
         self.inds = None
 

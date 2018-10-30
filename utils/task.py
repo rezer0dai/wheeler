@@ -19,6 +19,8 @@ class Task(object, metaclass=abc.ABCMeta):
 
         self.action_low = action_low
         self.action_high = action_high
+
+        self.env.register(self.bot_id, self.objective_id)
 # globals
     def iter_count(self):
         return Task.ep_count
@@ -62,7 +64,7 @@ class Task(object, metaclass=abc.ABCMeta):
                 break
         return np.array(action), state, r, done, good
 
-    def test_policy(self, bot, render = True):
+    def test_policy(self, bot):
         history = deque(maxlen=self.cfg['history_count'])
         state = self.reset(None, True)
         for s in [np.zeros(len(state))] * self.cfg['history_count']:
@@ -83,9 +85,6 @@ class Task(object, metaclass=abc.ABCMeta):
             a = a[0]
             h = h[0]
 
-            if render:
-                self.env.render()
-
             a = np.clip(a, self.action_low, self.action_high)
             _, state, reward, done, _ = self.step_ex(a, True)
 
@@ -104,11 +103,7 @@ class Task(object, metaclass=abc.ABCMeta):
         if 0 == random.randint(0, 1):#len(action)):#1):#
             return action, a
 
-        try:
-            aprob = torch.softmax(torch.from_numpy(action.reshape(-1)), 0)
-        except:
-            aprob = torch.nn.functional.softmax(torch.from_numpy(action.reshape(-1)), 0)
-
+        aprob = torch.softmax(torch.from_numpy(action.reshape(-1)), 0)
         a = np.random.choice(len(action), 1, p=aprob).item()
         action = np.zeros(action.shape)
         action[a] = 1.
@@ -136,18 +131,16 @@ class Task(object, metaclass=abc.ABCMeta):
             seed = random.randint(0, self.cfg['mcts_random_cap'])
         self.n_steps = 0
         self._seed = seed
-        return self.env_reset(seed, test)
+        return self.env_reset(seed)
 
     def seed(self):
         return self._seed
 
-    def env_reset(self, seed, _):
-        self.env.seed(self._seed)
-        state = self.env.reset()
-        return state
+    def env_reset(self, seed):
+        return self.env.reset(self.bot_id, self.objective_id, seed)
 
-    def update_goal(self, rewards, states, updates):
-        return rewards
+    def update_goal(self, rewards, states, n_states, updates):
+        return rewards, states, n_states
 
     @abc.abstractmethod
     def goal_met(self, state, n_steps):

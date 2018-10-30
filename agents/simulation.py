@@ -23,7 +23,7 @@ class Simulation(torch.multiprocessing.Process):
 
         self.cfg = cfg
         self.objective_id = objective_id
-        self.task = task_info.new(self.objective_id, bot_id)
+        self.task = task_info.new(bot_id, self.objective_id)
 
         self.actor = shared_actor
 #        self.master_actor = shared_actor

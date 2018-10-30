@@ -139,7 +139,7 @@ class ActorNetwork(SoftUpdateNetwork):
             self.opt.step(local_optim)
             self.soft_update(tau)
 
-            self._save_models(self.cfg, self.actor_id, "critic")
+            self._save_models(self.cfg, self.actor_id, "actor")
 
     def predict_present(self, states, history):
         states = torch.DoubleTensor(torch.from_numpy(

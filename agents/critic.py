@@ -353,10 +353,11 @@ class Critic(torch.multiprocessing.Process):
         actions = [e[0][2] for e in episode]
         f, p = self.actor.reevaluate(s_norm, actions)
 
-        rewards = np.asarray(self.task.update_goal(
+        rewards, s, n_s = np.asarray(self.task.update_goal(
             *zip(*[( # magic *
                 e[0][1], # rewards .. just so he can forward it to us back
                 e[0][0], # states .. 
+                e[0][5], # states .. 
 #                e[0][2], # action .. well for now no need, however some emulator may need them
                 bool(random.randint(0, self.cfg['her_max_ratio'])), # update or not
                 ) for i, e in enumerate(episode)])))
@@ -367,12 +368,12 @@ class Critic(torch.multiprocessing.Process):
                 self.discount, self.cfg['gae_tau'])
 
         return [(
-            e[0][0], # states we dont change them
-            e[0][1], # rewards -> imho no need to return in current implementation..
+            s[indices[i]],#e[0][0], # states we dont change them but update goal can change them ...
+            rewards[indices[i]],#e[0][1], # rewards -> imho no need to return in current implementation..
             e[0][2], # actions we dont change them
             p[indices[i]], 
             f[indices[i]], 
-            e[0][5], # n-states we dont change them
+            n_s[indices[i]],#e[0][5], # n-states we dont change them but ...
             n[indices[i]],
             f[(indices[i] + self.n_step) if indices[i]+self.n_step < len(f) else -1]
             ) for i, e in enumerate(map(lambda j: episode[j], indices))]

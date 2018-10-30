@@ -1,19 +1,22 @@
-from torch.multiprocessing import Queue, SimpleQueue, Process
+from torch.multiprocessing import Queue#, SimpleQueue, Process
+import threading
 
 class RemoteTaskComm(threading.Thread):
-    def __init__(self, factory, pipe_cmd, pipe_data):
+    def __init__(self, factory_mgr, factory_env, pipe_cmd, pipe_data):
         super().__init__()
         self.pipe_cmd = pipe_cmd
         self.pipe_data = pipe_data
+        self.workers = [None] * len(pipe_data)
 
-        self.factory = factory
+        self.factory_mgr = factory_mgr
+        self.factory_env = factory_env
 
         self.cmd = { 
                 "reset" : self._reset,
                 "step" : self._step, }
 
     def run(self): # active only at main process
-        self.mgr = LocalTaskManager(self.factory)
+        self.mgr = self.factory_mgr(self.factory_env)
 
         while True:
             data = self.pipe_cmd.get()
@@ -22,45 +25,55 @@ class RemoteTaskComm(threading.Thread):
             cmd, data = data
             if cmd not in self.cmd:
                 break
-            ind, out = self.cmd[cmd](*data)
-            self.pipe_data[ind].put(out)
+
+            ind, key, info = data
+            self.workers[ind] = threading.Thread(
+                    target=self.async_processing, 
+                    args=(ind, cmd, key, info))
+
+            self.workers[ind].start()
+
+    def async_processing(self, ind, cmd, key, data):
+        ind, out = self.cmd[cmd](ind, key, data)
+        self.pipe_data[ind].put(out)
 
     def _reset(self, ind, key, seed):
-        return ind, self.mgr.reset(key, seed)
+        return ind, self.mgr.reset(*key, seed)
 
     def _step(self, ind, key, action):
-        return ind, self.mgr.step(key, action)
+        return ind, self.mgr.step(*key, action)
 
 # all bots needs to be created from one process, and all task must be created in their ctors!!
 # > aka fully initialized before multiprocessing and training will start!
 # > haha what a design conditions .. but its ok for this mini project
 class RemoteTaskManager:
-    def __init__(self, factory_task, factory_env, n_tasks):
+    def __init__(self, factory_env, factory_mgr, n_tasks):
         self.pipe_cmd = Queue()
         self.pipe_data = [Queue() for _ in range(n_tasks)]
 
-        self.factory_task = factory_task
+        self.factory_mgr = factory_mgr
 
-# create process which will handle requests!
-        self.com = RemoteTaskComm(factory_env, self.pipe_cmd, self.pipe_data)
+# create thread ( in main process!! ) which will handle requests!
+        self.com = RemoteTaskComm(factory_mgr, factory_env, self.pipe_cmd, self.pipe_data)
 
         self.dtb = {}
         self.lock = threading.RLock()
+
 #    def turnon():
         self.com.start()
 
     def _ind(self, bot_id, objective_id):
         key = (bot_id, objective_id)
+        assert key in self.dtb, "you forgot to register your environment [remote] in ctor!!"
         with self.lock:
             return self.dtb[key]
 
-    def new(self, bot_id, objective_id):
+    def register(self, bot_id, objective_id):
         key = (bot_id, objective_id)
         with self.lock: # multibot register
-            if key not in self.dtb:
-                self.dtb[key] = len(self.dtb)
-            assert len(self.dtb) <= len(self.pipe_data), "tasks more than pipe.. remote task manager problem .."
-        return self.factory_task(bot_id, objective_id, self) # will wait until each reset
+            assert key not in self.dtb, "double initialization of your environment [remote]!!"
+            self.dtb[key] = len(self.dtb)
+            assert len(self.dtb) <= len(self.pipe_data), "#tasks > #pipes [remote task manager]"
 
     def reset(self, bot_id, objective_id, seed):
         ind = self._ind(bot_id, objective_id)
@@ -68,7 +81,7 @@ class RemoteTaskManager:
         self.pipe_cmd.put(["reset", args])
         return self.pipe_data[ind].get()
 
-    def step(self, bot_id, objective_id, action, test):
+    def step(self, bot_id, objective_id, action):
         ind = self._ind(bot_id, objective_id)
         args = (ind, (bot_id, objective_id), action)
         self.pipe_cmd.put(["step", args])
@@ -76,24 +89,30 @@ class RemoteTaskManager:
 
 class LocalTaskManager:
     def __init__(self, factory):
-        self.tasks = {}
+        self.envs = {}
         self.factory = factory
         self.lock = threading.RLock()
 
-    def _task(self, key):
+    def _env(self, key):
+        if key not in self.envs:
+            self.register(*key) # remote branch ...
+        return self.envs[key]
+
+    def register(self, bot_id, objective_id):
+        key = (bot_id, objective_id)
         with self.lock:
-            if key not in self.tasks:
-                self.tasks[key] = self.factory(len(self.tasks))
-            return self.tasks[key]
+            assert key not in self.envs, "double initialization of your environment!!"
+            self.envs[key] = self.factory(len(self.envs))
 
-    def reset(self, key, seed):
-        task = self._task(key)
-        task.seed(seed)
-        return task.reset()
+    def reset(self, bot_id, objective_id, seed):
+        env = self._env((bot_id, objective_id))
+        env.seed(seed)
+        return env.reset()
 
-    def step(self, key, action):
-        task = self._task(key)
-        if key[0] == -1:
-            task.render()
-        return task.step(action)
+    def step(self, bot_id, objective_id, action):
+        env = self._env((bot_id, objective_id))
 
+        if -1 == objective_id: # we are testing our policy!
+            env.render()
+
+        return env.step(action)
