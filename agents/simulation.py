@@ -13,16 +13,21 @@ from torch.multiprocessing import Queue, SimpleQueue, Process
 from utils import policy
 
 class Simulation(torch.multiprocessing.Process):
-    def __init__(self, cfg, model, task, bot_id, objective_id, shared_actor, model_actor, a_grads, keep_exploring, signal):
+    def __init__(self, 
+            cfg, model, task_info, 
+            bot_id, objective_id, 
+            shared_actor, model_actor, 
+            a_grads, keep_exploring, signal):
+        
         super(Simulation, self).__init__()
 
         self.cfg = cfg
         self.objective_id = objective_id
-        self.task = task.new(self.objective_id)#bot_id, 
+        self.task = task_info.new(self.objective_id, bot_id)
 
         self.actor = shared_actor
 #        self.master_actor = shared_actor
-#        self.actor = Actor(model_actor.new(task, cfg))
+#        self.actor = Actor(model_actor.new(task_info, cfg))
 
         self.best_max_step = self.cfg['max_n_step']
         self.delta_step = self.cfg['critic_learn_delta']
@@ -30,7 +35,7 @@ class Simulation(torch.multiprocessing.Process):
         self.count = 0
         self.n_step = self.cfg['n_step']
         self.discount = self.cfg['discount_rate']
-        self.max_n_episode = self.task.max_n_episode()
+        self.max_n_episode = self.cfg['max_n_episode']
 
         self.batch_size = self.cfg['batch_size']
 
@@ -43,14 +48,15 @@ class Simulation(torch.multiprocessing.Process):
         self.review = [Queue() for _ in range(self.cfg['n_critics'])]
         self.comitee = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
         self.td_gate = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
-        self.critics = [Critic(cfg, model, self.task, i + 1,
+        self.critics = [Critic(cfg, model, self.task, task_info, bot_id, i + 1,
             self.done[i],
             self.exps[i],
             self.review[i],
             self.comitee[i],
             self.td_gate[i],
             self.stats[i],
-            self.complete[i], self.actor) for i in range(self.cfg['n_critics'])]
+            self.complete[i],
+            self.actor) for i in range(self.cfg['n_critics'])]
 
         self.lock = threading.RLock()
 
@@ -186,7 +192,7 @@ class Simulation(torch.multiprocessing.Process):
         while not self.stats[0].empty():
             debug_out = self.stats[0].get()
 
-        if 0 != self.objective_id:
+        if 1 != self.objective_id:
             return
 
         if not self.cfg['dbgout']:

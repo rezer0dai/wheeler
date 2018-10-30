@@ -93,4 +93,4 @@ class ActorNN(nn.Module):
             feature = torch.cat(hidden, 1).view(1, 1, -1)
             features.append(feature.detach().cpu().numpy())
 
-        return features[:-1]
+        return features#[:-1]

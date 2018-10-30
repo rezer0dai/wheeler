@@ -13,7 +13,12 @@ from baselines.common.schedules import LinearSchedule
 from utils import policy
 
 class Critic(torch.multiprocessing.Process):
-    def __init__(self, cfg, model, task, xid, stop, exps, review, comitee, grads, stats, complete, actor):
+    def __init__(self, 
+            cfg, model, task, task_info,
+            bot_id, xid, 
+            stop, exps, review, comitee, grads, stats, complete, 
+            actor):
+
         super(Critic, self).__init__()
 
         self.actor = actor
@@ -52,10 +57,12 @@ class Critic(torch.multiprocessing.Process):
         self.lock = threading.RLock() # we protect only write operations ~ yeah yeah not so good :)
         self.replay = task.make_replay_buffer(cfg)
 
-        self.model = model.new(task, self.cfg, "%i_%i"%(task.xid, xid))
+        self.model = model.new(task_info, self.device, self.cfg, "%i_%i_%i"%(bot_id, task.objective_id, xid))
         self.model.share_memory()
 
-        self.curiosity = CuriosityPrio(task, cfg)
+        self.curiosity = CuriosityPrio(
+                task_info.state_size, task_info.action_size,
+                task_info.action_range, task_info.wrap_action, self.device, cfg)
 
     def q_a_function(self, states, actions, features, td_targets):
 # even in multiprocess critic is shared from main process

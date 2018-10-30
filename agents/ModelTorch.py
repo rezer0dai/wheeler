@@ -52,31 +52,58 @@ class SoftUpdateNetwork:
         self.target.share_memory()
         self.explorer.share_memory()
 
+    def _load_models(self, cfg, model_id, prefix):
+        if not cfg['load']:
+            return
+        
+        target = os.path.join(cfg['model_path'], '%s_target_%s'%(prefix, model_id))
+        explorer = os.path.join(cfg['model_path'], '%s_explorer_%s'%(prefix, model_id))
+        if not os.path.exists(target) or not os.path.exists(explorer):
+            return
+
+        self.target.load_state_dict(torch.load(target))
+        self.explorer.load_state_dict(torch.load(explorer))
+
+    def _save_models(self, cfg, model_id, prefix):
+        if not cfg['save']:
+            return
+        target = os.path.join(cfg['model_path'], '%s_target_%s'%(prefix, model_id))
+        explorer = os.path.join(cfg['model_path'], '%s_explorer_%s'%(prefix, model_id))
+
+        torch.save(self.target.state_dict(), target)
+        torch.save(self.explorer.state_dict(), explorer)
+
+
 class ActorNetwork(SoftUpdateNetwork):
-    def __init__(self, task, cfg):
+    def __init__(self, task_info, cfg, actor_id):
         torch.set_default_tensor_type(cfg['tensor'])
 
-        self.state_size = cfg['her_state_size'] + task.state_size() * cfg['history_count']
-        self.sim_count = task.subtasks_count()
+        self.state_size = cfg['her_state_size'] + task_info.state_size * cfg['history_count']
 
         self.cfg = cfg
+        self.actor_id = actor_id
         self.lock = threading.RLock()
 
-        self.device = task.device()
-        self.target = ActorNN(task, cfg).to(self.device)
-        self.explorer = ActorNN(task, cfg).to(self.device)
+        self.device = "cpu" if torch.cuda.device_count() else self.cfg['device']
+        self.target = ActorNN(
+                task_info.state_size, task_info.action_size, task_info.wrap_action, 
+                cfg).to(self.device)
 
-        if self.cfg['load'] and os.path.exists(os.path.join(self.cfg['model_path'], 'actor_target')):
-            self.target.load_state_dict(torch.load(os.path.join(self.cfg['model_path'], 'actor_target')))
-            self.explorer.load_state_dict(torch.load(os.path.join(self.cfg['model_path'], 'actor_explorer')))
+        self.explorer = ActorNN(
+                task_info.state_size, task_info.action_size, task_info.wrap_action, 
+                cfg).to(self.device)
 
         self.soft_update(1.)
 
-        self.attention = SimulationAttention(task, cfg) if self.cfg['attention_enabled'] else None
+        self.attention = None if not self.cfg['attention_enabled'] else SimulationAttention(
+                task_info.state_size, task_info.action_size, cfg)
 
         self.opt = torch.optim.Adam(
-                self.explorer.parameters() if not self.attention else list(self.explorer.parameters()) + list(self.attention.parameters()),
+                self.explorer.parameters() if not self.attention else list(
+                    self.explorer.parameters()) + list(self.attention.parameters()),
                 cfg['lr_actor'])
+
+        self._load_models(self.cfg, self.actor_id, "actor")
 
     def fit(self, states, advantages, actions, tau):
         states = torch.DoubleTensor(states).to(self.device)
@@ -112,9 +139,7 @@ class ActorNetwork(SoftUpdateNetwork):
             self.opt.step(local_optim)
             self.soft_update(tau)
 
-            if self.cfg['save']:
-                torch.save(self.target.state_dict(), os.path.join(self.cfg['model_path'], 'actor_target'))
-                torch.save(self.explorer.state_dict(), os.path.join(self.cfg['model_path'], 'actor_explorer'))
+            self._save_models(self.cfg, self.actor_id, "critic")
 
     def predict_present(self, states, history):
         states = torch.DoubleTensor(torch.from_numpy(
@@ -139,19 +164,24 @@ class ActorNetwork(SoftUpdateNetwork):
             return dist, features
 
     @staticmethod
-    def new(task, cfg):
-        return ActorNetwork(task, cfg)
+    def new(task_info, cfg, actor_id):
+        return ActorNetwork(task_info, cfg, actor_id)
 
 class CriticNetwork(SoftUpdateNetwork):
-    def __init__(self, task, cfg, objective_id):
+    def __init__(self, task_info, device, cfg, critic_id):
         torch.set_default_tensor_type(cfg['tensor'])
 
         self.cfg = cfg
-        self.objective_id = objective_id
+        self.critic_id = critic_id
 
-        self.device = task.device()
-        self.target = CriticNN(task, cfg).to(self.device)
-        self.explorer = CriticNN(task, cfg).to(self.device)
+        self.device = device
+        self.target = CriticNN(
+                task_info.state_size, task_info.action_size, task_info.wrap_value, 
+                cfg).to(self.device)
+
+        self.explorer = CriticNN(
+                task_info.state_size, task_info.action_size, task_info.wrap_value, 
+                cfg).to(self.device)
 
         self.soft_update(1.)
 
@@ -159,12 +189,9 @@ class CriticNetwork(SoftUpdateNetwork):
 
         self.lock = threading.RLock()
 
-        self.state_size = self.cfg['history_count'] * task.state_size() + cfg['her_state_size']
+        self.state_size = self.cfg['history_count'] * task_info.state_size + cfg['her_state_size']
 
-        if self.cfg['load'] and os.path.exists(os.path.join(self.cfg['model_path'], 'critic_target_%s'%self.objective_id)):
-            self.target.load_state_dict(torch.load(os.path.join(self.cfg['model_path'], 'critic_target_%s'%self.objective_id)))
-            self.explorer.load_state_dict(torch.load(os.path.join(self.cfg['model_path'], 'critic_explorer_%s'%self.objective_id)))
-
+        self._load_models(self.cfg, critic_id, "critic")
 
     def fit(self, states, actions, history, rewards, tau):
         # return
@@ -181,13 +208,12 @@ class CriticNetwork(SoftUpdateNetwork):
             loss = F.mse_loss(
                     self.explorer(states, actions, history), rewards)
             loss.backward()
+
         with self.lock:
             self.opt.step(optim)
             self.soft_update(tau)
 
-            if self.cfg['save']:
-                torch.save(self.target.state_dict(), os.path.join(self.cfg['model_path'], 'critic_target_%s'%self.objective_id))
-                torch.save(self.explorer.state_dict(), os.path.join(self.cfg['model_path'], 'critic_explorer_%s'%self.objective_id))
+            self._save_models(self.cfg, self.critic_id, "critic")
 
     def predict_present(self, states, actions, history):
         states = torch.DoubleTensor(torch.from_numpy(
@@ -212,5 +238,5 @@ class CriticNetwork(SoftUpdateNetwork):
             return self.target.forward(states, actions, history).detach().cpu().numpy()
 
     @staticmethod
-    def new(task, cfg, objective_id):
-        return CriticNetwork(task, cfg, objective_id)
+    def new(task_info, device, cfg, critic_id):
+        return CriticNetwork(task_info, device, cfg, critic_id)

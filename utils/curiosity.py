@@ -9,13 +9,13 @@ from utils.nes import *
 # well just POC of my mindset how curiosity should works ( not properly tested imho .. )
 
 class CuriosityNN(nn.Module):
-    def __init__(self, task, cfg, wrap_action):
+    def __init__(self, state_size, action_size, cfg, wrap_action):
         super(CuriosityNN, self).__init__()
         torch.set_default_tensor_type(cfg['tensor'])
         self.cfg = cfg
 
-        self.state_size = cfg['her_state_size'] + task.state_size() * cfg['history_count']
-        self.action_size = task.action_size()
+        self.state_size = cfg['her_state_size'] + state_size * cfg['history_count']
+        self.action_size = action_size
         self.wrap_action = wrap_action
 
         self.net = NoisyNet([self.state_size * 2, 64, 64, self.action_size])
@@ -34,10 +34,10 @@ class CuriosityNN(nn.Module):
         return self.net.parameters()
 
 class CuriosityPrio:
-    def __init__(self, task, cfg):
+    def __init__(self, state_size, action_size, action_range, wrap_action, device, cfg):
         self.cfg = cfg
-        self.rewarder = CuriosityNN(task, cfg, task.wrap_action).to(task.device())
-        self.action_range = task.action_range()
+        self.rewarder = CuriosityNN(state_size, action_size, cfg, wrap_action).to(device)
+        self.action_range = action_range
         self.opt = torch.optim.Adam(self.rewarder.parameters(), 1e-4)
 
     def weight(self, s, n, a):

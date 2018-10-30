@@ -12,18 +12,18 @@ class DDPGDist():
         return self.actions.clone()
 
 class DDPG(nn.Module):
-    def __init__(self, task):
+    def __init__(self, wrap_action):
         super().__init__()
-        self.task = task
+        self.wrap_action = wrap_action
     def forward(self, actions):
-        actions = self.task.wrap_action(actions)
+        actions = self.wrap_action(actions)
         dist = DDPGDist(actions)
         return dist
 
 class PPO(nn.Module):
-    def __init__(self, task):
+    def __init__(self, action_size):
         super().__init__()
-        self.log_std = nn.Parameter(torch.zeros(1, task.action_size()))
+        self.log_std = nn.Parameter(torch.zeros(1, action_size))
     def forward(self, mu):
         std = self.log_std.exp().expand_as(mu)
         dist = Normal(mu, std)

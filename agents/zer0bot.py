@@ -13,11 +13,10 @@ from torch.multiprocessing import Queue, SimpleQueue
 from baselines.common.schedules import LinearSchedule
 
 class Zer0Bot:
-    def __init__(self, bot_id, cfg, task, model_actor, model_critic):
+    def __init__(self, bot_id, cfg, task_info, model_actor, model_critic):
         self.cfg = cfg
         self.bot_id = bot_id
 
-        self.task_main = task
         self.n_step = self.cfg['n_step']
 
         self.counter = 1
@@ -25,26 +24,26 @@ class Zer0Bot:
                initial_p=self.cfg['tau_base'],
                final_p=cfg['tau_final'])
 
-        self._setup_actor(model_actor)
-        self._setup_critics(model_critic, model_actor)
+        self._setup_actor(model_actor, task_info)
+        self._setup_critics(model_critic, model_actor, task_info)
 
-    def _setup_actor(self, model):
-        self.actor = Actor(model.new(self.task_main, self.cfg), self.cfg)
+    def _setup_actor(self, model, task_info):
+        self.actor = Actor(model.new(task_info, self.cfg, "%i"%self.bot_id), self.cfg)
         self.actor.share_memory()
 
-    def _setup_critics(self, model, model_actor):
+    def _setup_critics(self, model_critic, model_actor, task_info):
         self.td_gate, self.mcts_timeout, self.signal = zip(*[(
-            Queue(), SimpleQueue(), Queue()) for i in range(self.task_main.subtasks_count())])
+            Queue(), SimpleQueue(), Queue()) for i in range(self.cfg['n_simulations'])])
 
         self.simulations = [Simulation(
-                self.cfg, model, self.task_main, self.bot_id, i + 1, self.actor, model_actor,
+                self.cfg, model_critic, task_info, self.bot_id, i + 1, self.actor, model_actor,
                 self.td_gate[i], self.mcts_timeout[i], self.signal[i]
-                ) for i in range(self.task_main.subtasks_count())]
+                ) for i in range(task_info.cfg['n_simulations'])]
 
     def act(self, state, history):# get exploitation action ( stable actor )
         a, history = self.actor.predict(state, history)
 #        a, history = self.actor.get_action_wo_grad(state, history)
-        return (torch.tensor(a), history)
+        return (a, history)
 
     def start(self):
         for c in self.simulations:

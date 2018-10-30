@@ -18,59 +18,15 @@ def initialize_weights(layer):
         return
     nn.init.xavier_uniform_(layer.weight)
 
-class CriticQ(nn.Module):
-    def __init__(self, task, cfg):
-        super().__init__()
-
-        self.wrap_value = task.wrap_value
-        self.cfg = cfg
-
-        self.state_encode = nn.Linear(task.state_size() * cfg['history_count'], 128)
-
-        if cfg['her_state_size']:
-            self.goal_encode = nn.Linear(cfg['her_state_size'], cfg['her_state_features'])
-
-        self.q_approx = nn.Sequential(
-                nn.Linear(128 + cfg['her_state_features'] + cfg['history_features'], 256),
-                nn.ReLU(),
-                nn.Linear(256,128, bias=False),
-                nn.ReLU(),
-                nn.Linear(128, 1, bias=False)
-                )
-
-        self.apply(initialize_weights)
-
-    def forward(self, state, _, context):
-        if self.cfg['her_state_size']:
-            goal = state[:, :self.cfg['her_state_size']]
-
-        context = context.squeeze(0)
-        state = torch.tanh(self.state_encode(
-            state[:, self.cfg['her_state_size']:]))
-
-        state = torch.cat([state, context], dim=1)
-
-        if self.cfg['her_state_size']:
-            goal = torch.tanh(self.goal_encode(goal))
-            state = torch.cat([state, goal], dim=1)
-
-        x = self.q_approx(state)
-        return self.wrap_value(x)
-
-    def sample_noise(self):
-        return
-    def remove_noise(self):
-        return
-
 class CriticNN(nn.Module):
-    def __init__(self, task, cfg):
+    def __init__(self, state_size, action_size, wrap_value, cfg):
         super().__init__()
 
-        self.wrap_value = task.wrap_value
+        self.wrap_value = wrap_value
         self.cfg = cfg
 
         self.state_encode = nn.Linear(
-                task.state_size() * cfg['history_count'] + task.action_size()
+                state_size * cfg['history_count'] + action_size
                 , 128)
 
         if cfg['her_state_size']:
@@ -112,13 +68,13 @@ class CriticNN(nn.Module):
 
 # noisy nets
 class ActorNN(nn.Module):
-    def __init__(self, task, cfg):
+    def __init__(self, state_size, action_size, wrap_action, cfg):
         super().__init__()
         self.cfg = cfg
 
-        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
+        self.algo = DDPG(wrap_action) if cfg['ddpg'] else PPO(action_size)
 
-        self.state_size = task.state_size()
+        self.state_size = state_size
 
         self.rnn = nn.GRU(
                 self.state_size, cfg['history_features'],
@@ -131,8 +87,7 @@ class ActorNN(nn.Module):
         if self.cfg['her_state_size']:
             self.her_state = nn.Linear(cfg['her_state_size'], cfg['her_state_features'])
 
-        self.ex = NoisyLinear(cfg['her_state_features'] + cfg['history_features'], task.action_size())
-#        self.ex = nn.Linear(cfg['her_state_features'] + cfg['history_features'], task.action_size(), bias=False)
+        self.ex = NoisyLinear(cfg['her_state_features'] + cfg['history_features'], action_size)
 
         self.features = None
 
@@ -157,7 +112,6 @@ class ActorNN(nn.Module):
         return self.algo(x)
 
     def sample_noise(self):
-#        return
         self.ex.sample_noise()
 
     def remove_noise(self):
@@ -186,4 +140,4 @@ class ActorNN(nn.Module):
             _, hidden = self.rnn(x, hidden)
             features.append(hidden.detach().cpu().numpy())
 
-        return features[:-1]
+        return features#[:-1]

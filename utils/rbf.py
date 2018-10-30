@@ -3,7 +3,7 @@ import sklearn.pipeline
 import sklearn.preprocessing
 from sklearn.kernel_approximation import RBFSampler
 
-class State:
+class RbfState:
     """ code : https://www.udemy.com/deep-reinforcement-learning-in-python/ ( RBF part ) and also here : https://github.com/dennybritz/reinforcement-learning
         + bring more features to simple state ~ faster/possible learning
         - need to figure out good parameters for problem ( gama, # )
