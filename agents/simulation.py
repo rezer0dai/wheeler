@@ -118,7 +118,7 @@ class Simulation(torch.multiprocessing.Process):
             rewards = []
             goods = []
 
-            state = self.task.reset(seed)
+            state = self.task.reset(seed)[0]
             next_state = state
 
             f_pi = np.zeros(shape=(1, 1, self.cfg['history_features']))
@@ -129,15 +129,18 @@ class Simulation(torch.multiprocessing.Process):
             features += [f_pi] * 1
 
             done = False
-            while len(rewards) < self.max_n_episode:
+            while True:
 #                self._eval(self.td_backdoor)
 
                 state = next_state
                 history.append(np.vstack(state))
                 state = np.vstack(history).squeeze(1)
-
                 state = self.task.transform_state(state)
+
                 if done:
+                    break
+
+                if len(rewards) >= self.max_n_episode:
                     break
 
                 norm_state = self.task.normalize_state(state.copy())

@@ -6,6 +6,7 @@ import toml, torch, gym
 
 from utils.rbf import *
 from utils.task import Task
+from utils.taskinfo import *
 from utils.taskmgr import *
 
 from agents.zer0bot import Zer0Bot
@@ -34,13 +35,14 @@ class MCarTask(Task):
         state = super().reset(seed, test)
         self.rewards.append(self.reward)
         self.reward = 0
-        self.prev_state = state
-        return self.encoder.transform(state)
+        self.prev_state = state[0]
+        return [ self.encoder.transform(state[0]) ]
 
     def step_ex(self, action, test = False):
         self.n_steps += 1
-        state, reward, done, _ = self.env.step(self.bot_id, self.objective_id, action)#self.env.step(action)#
-#        action = clamped_action # if we clamp this is problem for PPO ...
+        state, reward, done, _ = self.env.step(self.bot_id, self.objective_id, action)
+
+        if test: return action, [ self.encoder.transform(state.reshape(-1)) ], reward, done, True
 
         self.reward += (done and reward > 0)
 
@@ -67,42 +69,28 @@ class MCarTask(Task):
         print("TEST : ", sum(rewards))
         return sum(rewards) > 90.
 
-class TaskInfo:
-    def __init__(self, cfg, encoder, Mgr, args):
-        self.state_size = 80#env.observation_space.shape[0]
-        self.action_size = 1#env.action_space.shape[0]
-        self.action_low = -1
-        self.action_high = +1
+class MCarInfo(TaskInfo):
+    def __init__(self, cfg, replaybuf,  encoder, factory, Mgr, args):
+        super().__init__(
+                80, 1, -1, +1,
+                cfg,
+                encoder, replaybuf,
+                factory, Mgr, args)
 
-        self.action_range = self.action_high - self.action_low
-
-        self.env = Mgr(self._new, *args)
-        self.cfg = cfg
-        self.encoder = encoder
-
+        return
         self.rewarder = CuriosityPrio(
                 self.state_size, self.action_size,
                 self.action_range, self.wrap_action, "cpu", cfg)
 
-    def wrap_value(self, x):
-        return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
-
-    def wrap_action(self, x):
-        return torch.clamp(x, min=self.action_low, max=self.action_high)
-
-    def new(self, bot_id, objective_id):
-        return MCarTask(self.cfg, self.encoder, 
+    def new(self, cfg, bot_id, objective_id):
+        return MCarTask(cfg, self.encoder, 
                 self.env,
                 objective_id, bot_id,
                 self.action_low, self.action_high,
-                self.rewarder)
-
-    def make_replay_buffer(self, objective_id):
-        buffer_size = self.cfg['replay_size']
-        return ReplayBuffer(self.cfg, objective_id)
+                None)#self.rewarder)
 
     @staticmethod
-    def _new(ind): # bare metal task creation
+    def factory(ind): # bare metal task creation
         print("created %i-th task"%ind)
         CFG = toml.loads(open('cfg.toml').read())
         return gym.make(CFG['task'])
@@ -115,42 +103,40 @@ def main():
 
     ENV = gym.make(CFG['task'])
     ENCODER = RbfState(ENV, [5., 2., 1., .5], [20] * 4)
-    INFO = TaskInfo(CFG, ENCODER, LocalTaskManager, ())
+    INFO = MCarInfo(CFG, ReplayBuffer, ENCODER, MCarInfo.factory, LocalTaskManager, ())
 #    INFO = TaskInfo(CFG, ENCODER, RemoteTaskManager, (LocalTaskManager, 1 + CFG['n_simulations']))
-    task = INFO.new(0, -1)
 
-    counter = 0
-    while True:
-        counter += 1
-        bot = Zer0Bot(
-            0,
-            CFG,
-            INFO,
-            ModelTorch.ActorNetwork,
-            ModelTorch.CriticNetwork)
+    DDPG_CFG = toml.loads(open('gym.toml').read())
 
-        bot.start()
+    task = INFO.new(DDPG_CFG, 0, -1)
 
-        z = 0
-        task.training_status(False)
-        while not task.learned():
-            bot.train()
-            print()
-            task.training_status(
-                    all(task.test_policy(bot)[0] for _ in range(10)))
-            z+=1
+    bot = Zer0Bot(
+        0,
+        DDPG_CFG,
+        INFO,
+        ModelTorch.ActorNetwork,
+        ModelTorch.CriticNetwork)
 
-        print("\n")
-        print("="*80)
-        print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
-        print("="*80)
+    bot.turnon()
 
-        for i in range(10): print("total steps : %i < training : %i :: %i >"%(
-            counter, 
-            z * CFG['mcts_rounds'] * CFG['n_simulations'],
-            len(task.test_policy(bot)[2])))
+    z = 0
+    task.training_status(False)
+    while not task.learned():
+        bot.train()
+        print()
+        task.training_status(
+                all(task.test_policy(bot)[0] for _ in range(10)))
+        z+=1
 
-        break
+    print("\n")
+    print("="*80)
+    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("="*80)
+
+    for i in range(10): print("total steps : %i < training : %i :: %i >"%(
+        counter, 
+        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+        len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:
     main()

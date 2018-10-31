@@ -1,7 +1,8 @@
-from torch.multiprocessing import Queue#, SimpleQueue, Process
+from torch.multiprocessing import Queue, Process#, SimpleQueue
 import threading
 
-class RemoteTaskComm(threading.Thread):
+# decide if we want to push it to separate process or in main proc as thread
+class RemoteTaskComm(Process):#threading.Thread):#
     def __init__(self, factory_mgr, factory_env, pipe_cmd, pipe_data):
         super().__init__()
         self.pipe_cmd = pipe_cmd
@@ -49,7 +50,7 @@ class RemoteTaskComm(threading.Thread):
 class RemoteTaskManager:
     def __init__(self, factory_env, factory_mgr, n_tasks):
         self.pipe_cmd = Queue()
-        self.pipe_data = [Queue() for _ in range(n_tasks)]
+        self.pipe_data = [Queue() for _ in range(n_tasks + 1)]
 
         self.factory_mgr = factory_mgr
 

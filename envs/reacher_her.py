@@ -6,6 +6,7 @@ import random, toml, torch, gym
 
 from utils.normalizer import *
 from utils.task import Task
+from utils.taskinfo import *
 from utils.taskmgr import *
 from utils.crossexp import *
 
@@ -44,8 +45,8 @@ def fun_reward(s, n, gs, objective_id, cfg, her):
     return -1 + .9 * int(a < b)
 
 def sample_goal(cfg, goal, target, n_target):
+    hs = cfg['her_state_size']
     def noisy_goal():
-        hs = cfg['her_state_size']
         ind = -(len(goal) - hs) // cfg['history_count']
 #        return goal[ind:ind+hs]
         for i in range(3):# be carefull extremly expensive
@@ -63,8 +64,8 @@ def sample_goal(cfg, goal, target, n_target):
                 return g[:hs]
         return goal[ind:ind+hs]
     gs = noisy_goal()
-    return (np.hstack([gs, target[3:]]).reshape(-1),
-            np.hstack([gs, n_target[3:]]).reshape(-1))
+    return (np.hstack([gs, target[hs:]]).reshape(-1),
+            np.hstack([gs, n_target[hs:]]).reshape(-1))
 
 def goal_select(total_after, n_step):
     if total_after <= n_step + 1: # only last n_state remainds
@@ -80,6 +81,7 @@ class Reacher(Task):
         self.state_size = state_size
 
         self.n_step = cfg['n_step']
+        self.her_size = cfg['her_state_size']
 
         super().__init__(
                 cfg,
@@ -88,14 +90,32 @@ class Reacher(Task):
                 bot_id,
                 action_low, action_high)
 
+    def _extract_goal(self, state):
+        return state[-4-3:-1-3]
+
+    def _her_context_update(self, state):
+        goal = []
+        states = []
+        for i in range(len(state)):
+            goal.append(self._extract_goal(state[i]))
+            states.append(transform(state[i]).reshape(-1))
+        return goal, states
+
     def reset(self, seed = None, test = False):
         cfg = {"goal_size":CLOSE_ENOUGH * 4, "goal_speed":1.}
-        state = super().reset(cfg, test)
+        state = super().reset(cfg, test)[0]
 
-        self.goal = state[-4-3:-1-3]
+        if test:
+            self.goal, states = self._her_context_update(state)
+            return states
+
+        self.goal = [ self._extract_goal(state) ]
         state = transform(state)
         self.prev_state = np.zeros(len(state))
-        return state.reshape(-1)
+        return [state.reshape(-1)]
+
+    def her_state(self, i = 0):
+        return self.goal[i]
 
     def update_goal(self, _, states, n_states, updates):
         rews = []
@@ -106,59 +126,19 @@ class Reacher(Task):
                 g = states[i + goal_select(len(states) - i, self.n_step)]
                 s, n = sample_goal(self.cfg, g, s, n)
             else:
-                g = s[:self.cfg['her_state_size']]
+                g = s[:self.her_size]
             stat.append(s)
             nstat.append(n)
             rews.append(fun_reward(s, n, g, self.objective_id, self.cfg, True))
         return (rews, stat, nstat)
 
-
-    def step_ex(self, action, test = False):
-        self.n_steps += 1
-        
-        if test: action = [action] * self.cfg['task_required_simulations'] # well this is obiousely bad lol ...
-        state, done, r = self.env.step(self.bot_id, self.objective_id, action)
-
-#        print("given reward for objective", r, self.objective_id)
-
-        self.goal = state[-4-3:-1-3]
-        state = transform(state)
-        good = True
-
-#        reward = r if test else -(r == 0)
-
-        reward = r if test else fun_reward(np.hstack(
-            [self.goal, np.hstack([self.prev_state] * self.cfg['history_count'])]),
-                np.hstack([self.goal, np.hstack([state] * self.cfg['history_count'])]),
-                self.goal, self.objective_id, self.cfg, False)
-
-#        reward = r if test else fun_reward(np.hstack([self.goal, self.prev_state]),
-#                np.hstack([self.goal, state]), self.goal, self.xid, False)
-        self.prev_state = state
-
-#        if r != 0: print("OK WELL DONE ", self.n_steps, reward)
-#        n = np.hstack([self.goal, state])
-#        gs = np.hstack([self.goal, state])
-#        print(r, reward)
-#        assert not r or reward == 0, "incosistent rewards with goal {}::{} || {} -> {} {}".format(r, reward,
-#                np.abs(goal_distance(n[3:3+3], gs[:3])), state, self.goal)
-
-        return action, state, reward, done, good
-
-    def goal_met(self, states, rewards, n_steps):
-        print("TEST : ", sum(rewards), sum(map(lambda r: r != 0, rewards)), len(rewards))
-        return sum(abs(r) for r in rewards) > 30
-
-    def her_state(self):
-        return self.goal
-
 # move those to to replay buffer manger .. so at first create replay buffer manager lol ...
     def normalize_state(self, states): # here is ok to race ~ well not ok but i dont care now :)
         states = np.array(states).reshape(-1, 
-                self.state_size * self.cfg['history_count'] + self.cfg['her_state_size'])
+                self.state_size * self.cfg['history_count'] + self.her_size)
 
-        s = self.encoder[0].normalize(states[:, self.cfg['her_state_size']:])
-        g = self.encoder[1].normalize(states[:, :self.cfg['her_state_size']])
+        s = self.encoder[0].normalize(states[:, self.her_size:])
+        g = self.encoder[1].normalize(states[:, :self.her_size])
         return np.hstack([s, g])
 
 # need to share params and need to be same as all simulations using!! -> move to TaskInfo!!
@@ -166,30 +146,42 @@ class Reacher(Task):
         states = np.vstack(states)
         with self.lock:
 #            self.encoder.update(states)
-            self.encoder[0].update(states[:, 3:])
-            self.encoder[1].update(states[:, :3])
-            self.encoder[1].update(states[:, 3:6])
+            self.encoder[0].update(states[:, self.her_size:])
+            self.encoder[1].update(states[:, :self.her_size])
+            self.encoder[1].update(states[:, self.her_size:self.her_size*2])
 
-class TaskInfo:
-    def __init__(self, cfg, encoder, factory, Mgr, args):
-        self.state_size = 30 - 4#env.observation_space.shape[0]
-        self.action_size = 4#env.action_space.shape[0]
-        self.action_low = -1
-        self.action_high = +1
+    def step_ex(self, action, test = False):
+        state, done, reward = self.env.step(self.bot_id, self.objective_id, action)
 
-        self.action_range = self.action_high - self.action_low
+        if test:
+            self.goal, states = self._her_context_update(state)
+            return action, states, reward, done, True
 
-        self.env = Mgr(factory, *args)
-        self.cfg = cfg
-        self.encoder = encoder
+        self.n_steps += 1
 
-        self.CBE = cross_exp_buffer(self.cfg)
+        self.goal = [ self._extract_goal(state) ]
+        state = transform(state)
+        good = True
 
-    def wrap_value(self, x):
-        return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
+        reward = fun_reward(np.hstack(
+            [self.goal[0], np.hstack([self.prev_state] * self.cfg['history_count'])]),
+                np.hstack([self.goal[0], np.hstack([state] * self.cfg['history_count'])]),
+                self.goal[0], self.objective_id, self.cfg, False)
 
-    def wrap_action(self, x):
-        return torch.clamp(x, min=self.action_low, max=self.action_high)
+        self.prev_state = state
+        return action, state, reward, done, good
+
+    def goal_met(self, states, rewards, n_steps):
+        print("TEST : ", sum(rewards), sum(map(lambda r: r != 0, rewards)), len(rewards))
+        return sum(abs(r) for r in rewards) > 30
+
+class ReacherInfo(TaskInfo):
+    def __init__(self, cfg, encoder, replaybuf, factory, Mgr, args):
+        super().__init__(
+                30 - 4, 4, -1, +1,
+                cfg,
+                encoder, replaybuf,
+                factory, Mgr, args)
 
     def new(self, cfg, bot_id, objective_id):
         return Reacher(cfg, self.encoder, 
@@ -197,36 +189,35 @@ class TaskInfo:
                 objective_id, bot_id,
                 self.action_low, self.action_high, self.state_size)
 
-    def make_replay_buffer(self, cfg, objective_id):
-        buffer_size = cfg['replay_size']
-        return self.CBE(cfg, objective_id)
-
 def main():
     CFG = toml.loads(open('cfg.toml').read())
     torch.set_default_tensor_type(CFG['tensor'])
 
     print(CFG)
 
-    encoder_s = Normalizer((30-4) * CFG['history_count'])
+    DDPG_CFG = toml.loads(open('ddpg_cfg.toml').read())
+
+    encoder_s = Normalizer((30 - 4) * DDPG_CFG['history_count'])
     encoder_s.share_memory()
-    encoder_g = Normalizer(CFG['her_state_size'])
+    encoder_g = Normalizer(DDPG_CFG['her_state_size'])
     encoder_g.share_memory()
-    encoder = (encoder_s, encoder_g)#None#
+    encoder = (encoder_s, encoder_g)
 
     from utils.unity import unity_factory
 
-    INFO = TaskInfo(
+    INFO = ReacherInfo(
             CFG, 
             encoder, 
-            unity_factory(CFG['task_required_simulations']), 
-            RemoteTaskManager, (LocalTaskManager, 1 + CFG['task_required_simulations']))
+            cross_exp_buffer(CFG),
+            unity_factory(CFG, CFG['total_simulations']), 
+            RemoteTaskManager, (LocalTaskManager, CFG['total_simulations']))
 
-    task = INFO.new(CFG, 0, -1)
-    task.reset()
+    task = INFO.new(DDPG_CFG, 0, -1)
+    task.reset(None, True)
 
     bot_ddpg = Zer0Bot(
         0,
-        CFG,
+        DDPG_CFG,
         INFO,
         ModelTorch.ActorNetwork,
         ModelTorch.CriticNetwork)
@@ -236,15 +227,25 @@ def main():
     # from its experience ~ PPO no necessary to learn properly, target is DDPG
     # we want also to load PPO model from DPPG one periodically, as so using PPO as explorer of close unknown
     PPO_CFG = toml.loads(open('ppo_cfg.toml').read())
-    assert PPO_CFG['max_n_episode'] == CFG['max_n_episode'], "max episode count must be equal for all agents!"
-    bot_ppo = Zer0Bot(
-        1,
+
+    assert (
+        PPO_CFG['max_n_episode'] == DDPG_CFG['max_n_episode'] and
+        PPO_CFG['her_state_features'] == DDPG_CFG['her_state_features'] and
+        PPO_CFG['history_features'] == DDPG_CFG['history_features'] and
+        PPO_CFG['her_state_size'] == DDPG_CFG['her_state_size']
+        ), "check assert those need to have be the same in order of PPO to boost DDPG"
+
+    explorers = [ Zer0Bot(
+        1 + i,
         PPO_CFG,
         INFO,
         ModelTorch.ActorNetwork,
-        ModelTorch.CriticNetwork)
-    bot_ppo.turnon() # launch critics!
-    bot_ppo.start() # ppo will run at background
+        ModelTorch.CriticNetwork) for i in range(2) ]
+    for bot in explorers:
+        bot.turnon() # launch critics!
+        bot.start() # ppo will run at background
+    single_bot_setting = '''
+    explorers = []
 #    '''
 
     bot_ddpg.turnon()
@@ -257,22 +258,25 @@ def main():
     while not task.learned():
         bot_ddpg.train()
 
-        bot_ppo.actor.model.beta_sync() # update our explorer
+        for bot in explorers:
+            bot.actor.model.beta_sync() # update our explorer
 
         print()
         task.training_status(
                 all(task.test_policy(bot_ddpg)[0] for _ in range(10)))
         z+=1
 
-    bot_ppo.stop.put(True)
+    for bot in explorers:
+        bot.stop.put(True)
 
     print("\n")
     print("="*80)
     print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
     print("="*80)
 
-    while not bot_ppo.stop.empty():
-        pass
+    for bot in explorers:
+        while not bot.stop.empty():
+            pass
 
 if '__main__' == __name__:
     main()

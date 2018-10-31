@@ -41,10 +41,6 @@ class Task(object, metaclass=abc.ABCMeta):
         if 1 == torch.cuda.device_count():
             return "cuda"
         return "cuda:%i"%(1 + (self.objective_id % (torch.cuda.device_count() - 1)))
-# workers
-    def make_replay_buffer(self, cfg):
-        buffer_size = self.cfg['replay_size']
-        return ReplayBuffer(cfg, self.objective_id)
 
     def step(self, action):
         r = 0
@@ -65,33 +61,37 @@ class Task(object, metaclass=abc.ABCMeta):
         return np.array(action), state, r, done, good
 
     def test_policy(self, bot):
-        history = deque(maxlen=self.cfg['history_count'])
         state = self.reset(None, True)
-        for s in [np.zeros(len(state))] * self.cfg['history_count']:
-            history.append(np.vstack(s))
 
-        states = []
+        history = [deque(maxlen=self.cfg['history_count']) for _ in range(len(state))]
+        hiddens = []
+        for h in history:
+            for s in [np.zeros(len(state[0]))] * self.cfg['history_count']:
+                h.append(np.vstack(s))
+            hiddens.append(np.zeros(shape=(1, 1, self.cfg['history_features'])))
+
         rewards = []
-        h = np.zeros(shape=(1, 1, self.cfg['history_features']))
-        while True:
-            history.append(np.vstack(state))
-            state = np.vstack(history).squeeze(1)
-            state = self.transform_state(state)
-            norm_state = self.normalize_state(state.copy())
+        states = []
+        done = 0
+        while not np.sum(done):
+            reward = []
+            action = []
+            for i, s in enumerate(state):
+                history[i].append(np.vstack(s))
+                state = np.vstack(history[i]).squeeze(1)
+                state = self.transform_state(state, i)
+                norm_state = self.normalize_state(state.copy())
 
-            a, h = bot.act(norm_state, h)
+                a, h = bot.act(norm_state, hiddens[i])
+                hiddens[i] = h[0]
 
-#we are concerned only at first action, in test we dont repeat!
-            a = a[0]
-            h = h[0]
+                a = np.clip(a[0], self.action_low, self.action_high)
+                action.append(a)
 
-            a = np.clip(a, self.action_low, self.action_high)
-            _, state, reward, done, _ = self.step_ex(a, True)
+            _, state, reward, done, _ = self.step_ex(action, True)
 
             states.append(state)
-            rewards.append(reward)
-            if done:
-                break
+            rewards.append(np.mean(reward))
 
         return self.goal_met(states, rewards, len(rewards)), states, rewards
 
@@ -109,11 +109,11 @@ class Task(object, metaclass=abc.ABCMeta):
         action[a] = 1.
         return action, a
 
-    def her_state(self):
+    def her_state(self, ind = 0):
         return []
 
-    def transform_state(self, state):
-        return np.hstack([self.her_state(), state])
+    def transform_state(self, state, ind = 0):
+        return np.hstack([self.her_state(ind), state])
 
     def normalize_state(self, state):
 # different than encoding
@@ -131,7 +131,7 @@ class Task(object, metaclass=abc.ABCMeta):
             seed = random.randint(0, self.cfg['mcts_random_cap'])
         self.n_steps = 0
         self._seed = seed
-        return self.env_reset(seed)
+        return [self.env_reset(seed)]
 
     def seed(self):
         return self._seed

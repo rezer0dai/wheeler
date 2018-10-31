@@ -8,7 +8,7 @@ import torch.multiprocessing
 from collections import deque
 from utils.curiosity import CuriosityPrio
 
-from baselines.common.schedules import LinearSchedule
+from utils.learning_rate import LinearAutoSchedule as LinearSchedule
 
 from utils import policy
 
@@ -39,7 +39,6 @@ class Critic(torch.multiprocessing.Process):
 
         self.device = task.device()
 
-        self.debug_out = "x" * 10
         self.debug_out_ex = "y" * 10
 
         assert not self.cfg['gae'] or self.cfg['n_step'] == 1, "gae is currently enabled only with one step lookahead!"
@@ -57,9 +56,14 @@ class Critic(torch.multiprocessing.Process):
         self.lock = threading.RLock() # we protect only write operations ~ yeah yeah not so good :)
         self.replay = task_info.make_replay_buffer(self.cfg, task.objective_id)
 
-        self.model = model.new(task_info, self.device, self.cfg, "%i_%i_%i"%(bot_id, task.objective_id, xid))
+        self.model = model.new(
+                task_info, 
+                self.device, 
+                self.cfg, 
+                "%i_%i_%i"%(bot_id, task.objective_id, xid))
         self.model.share_memory()
 
+        # here imho configurable choise : use curiosity, td errors, random, or another method
         self.curiosity = CuriosityPrio(
                 task_info.state_size, task_info.action_size,
                 task_info.action_range, task_info.wrap_action, self.device, cfg)
@@ -132,6 +136,8 @@ class Critic(torch.multiprocessing.Process):
     def _inject(self, action, exp):
 #        return
         states, rewards, actions, probs, features, n_states, n_features = exp
+        if not len(states):
+            return
         actions, _, _, s_norm, n_norm = self.stack_inputs(actions, states, n_states)
 
         n_rewards = policy.td_lambda(rewards, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
@@ -251,7 +257,7 @@ class Critic(torch.multiprocessing.Process):
 
         self.counter += 1
         self.model.fit(states, actions, features, td_targets,
-                self.tau.value(self.counter) * (0 == self.counter % self.cfg['critic_update_delay']))
+                self.tau.value() * (0 == self.counter % self.cfg['critic_update_delay']))
 
         self.debug_out_ex = "[ TARGET:{:2f} replay::{} ]<----".format(
                 td_targets[-1].item(), len(self.replay))

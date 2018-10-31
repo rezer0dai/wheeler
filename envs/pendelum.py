@@ -1,106 +1,99 @@
 import sys, os
 sys.path.append(os.path.join(sys.path[0], ".."))
 
-import gym
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-
 import numpy as np
+import toml, torch, gym
 
-import time, threading, math, random, sys
-from collections import deque, namedtuple, deque
-
-import toml
-cfg = toml.loads(open('cfg.toml').read())
-
-torch.set_default_tensor_type(cfg['tensor'])
+from utils.rbf import *
+from utils.task import Task
+from utils.taskinfo import *
+from utils.taskmgr import *
 
 from agents.zer0bot import Zer0Bot
+import agents.ModelTorch as ModelTorch
 
-from utils.task import Task
-
-import sklearn.pipeline
-import sklearn.preprocessing
-from sklearn.kernel_approximation import RBFSampler
+from utils.curiosity import *
+from utils.replay import *
 
 class PendelumTask(Task):
-    def __init__(self, cfg, xid = -1):
-        # utils
-        self.cfg = cfg
-        self.env = gym.make(cfg['task'])
-
-        init_state = self.reset()
-        state_size = len(init_state)
-
-        # helpers ~ TODO minirefactor, move it to params of Task.__init__!
-        self.action_low = self.env.action_space.low[0]
-        self.action_high = self.env.action_space.high[0]
-        super(PendelumTask, self).__init__(
+    def __init__(self, cfg, env, objective_id, bot_id, action_low, action_high):
+        super().__init__(
                 cfg,
-                xid,
-                self.env,
-                1,#self.env.action_space.n,
-                state_size)
-
-    def new(self, i):
-        if self.xid == -1:
-            return PendelumTask(self.cfg, i)
-        return super(PendelumTask, self).new(i)
+                env,
+                objective_id,
+                bot_id,
+                action_low, action_high)
 
     def step_ex(self, action, test = False):
-        self.n_steps += 1
-#        action = F.tanh(torch.from_numpy(action)) * 2
-        state, reward, done, _ = self.env.step(action)
-        return (action, state, reward, done, True)
-
-    def wrap_value(self, x):
-#        return F.tanh(x / 2.) * self.cfg['max_reward_val']
-        return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
-
-    def wrap_action(self, x):
-        return torch.clamp(x, min=-2, max=+2)
-        return F.tanh(x) * 2
+        state, reward, done, _ = self.env.step(self.bot_id, self.objective_id, action)
+        if test: return action, [ state.reshape(-1) ], reward, done, True
+        return action, state, reward, done, True
 
     def goal_met(self, states, rewards, n_steps):
         print("TEST ", sum(rewards))
         return sum(rewards) > -150.
 
+class PendelumInfo(TaskInfo):
+    def __init__(self, cfg, replaybuf, factory, Mgr, args):
+        env = self.factory(0)
+        super().__init__(
+                3, 1, float(env.action_space.low[0]), float(env.action_space.high[0]),
+                cfg,
+                None, replaybuf,
+                factory, Mgr, args)
+
+
+    def new(self, cfg, bot_id, objective_id):
+        return PendelumTask(cfg, 
+                self.env,
+                objective_id, bot_id,
+                self.action_low, self.action_high)
+
+    @staticmethod
+    def factory(ind): # bare metal task creation
+        print("created %i-th task"%ind)
+        CFG = toml.loads(open('cfg.toml').read())
+        return gym.make(CFG['task'])
+
 def main():
-    print(cfg)
+    CFG = toml.loads(open('cfg.toml').read())
+    torch.set_default_tensor_type(CFG['tensor'])
 
-    counter = 0
-    while True:
-        import agents.ModelTorch as ModelTorch
+    print(CFG)
 
-        counter += 1
-        bot = Zer0Bot(
-            0,
-            cfg,
-            PendelumTask(cfg), # task "manager"
-            ModelTorch.ActorNetwork,
-            ModelTorch.CriticNetwork)
+    INFO = PendelumInfo(CFG, ReplayBuffer, PendelumInfo.factory, LocalTaskManager, ())
 
-        bot.start()
+    DDPG_CFG = toml.loads(open('gym.toml').read())
 
-        z = 0
-        bot.task_main.training_status(False)
-        while not bot.task_main.learned():
-            bot.train()
-            print()
-            bot.task_main.training_status(
-                    all(bot.task_main.test_policy(bot, True)[0] for _ in range(10)))
-            z+=1
+    task = INFO.new(DDPG_CFG, 0, -1)
 
-        print("\n")
-        print("="*80)
-        print("training over", counter, z * bot.task_main.subtasks_count() * ROUNDS)
-        print("="*80)
-        for i in range(10): print("total steps : ", len(bot.task_main.test_policy(bot, True)[2]))
-        while True: bot.task_main.test_policy(bot, True)
-        break
+    bot = Zer0Bot(
+        0,
+        DDPG_CFG,
+        INFO,
+        ModelTorch.ActorNetwork,
+        ModelTorch.CriticNetwork)
+
+    bot.turnon()
+
+    z = 0
+    task.training_status(False)
+    while not task.learned():
+        bot.train()
+        print()
+        task.training_status(
+                all(task.test_policy(bot)[0] for _ in range(10)))
+        z+=1
+
+    print("\n")
+    print("="*80)
+    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("="*80)
+
+    for i in range(10): print("total steps : %i < training : %i :: %i >"%(
+        counter, 
+        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+        len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:
     main()

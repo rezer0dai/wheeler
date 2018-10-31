@@ -10,7 +10,7 @@ from torch.autograd import Variable
 import torch.multiprocessing
 from torch.multiprocessing import Queue, SimpleQueue, Process
 
-from baselines.common.schedules import LinearSchedule
+from utils.learning_rate import LinearAutoSchedule as LinearSchedule
 
 class Zer0Bot(Process):
     def __init__(self, bot_id, cfg, task_info, model_actor, model_critic):
@@ -73,7 +73,7 @@ class Zer0Bot(Process):
     def _train_worker(self):
         time.sleep(.1)
 #        time.sleep(self.cfg["learn_loop_to"])
-        status = self._update_policy(self.tau.value(self.counter))
+        status = self._update_policy(self.tau.value())
         if not status:
             return
         self.counter += 1

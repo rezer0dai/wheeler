@@ -8,7 +8,7 @@ gae = true#false#
 n_step = 1
 batch_size = 1
 discount_rate = 0.995
-n_simulations = 6
+n_simulations = 20#1#
 n_critics = 1
 disjoint_critics = false
 
@@ -17,9 +17,9 @@ critic_learn_delta = 5
 lr_actor = 3e-4
 lr_critic = 1e-4
 
-mcts_rounds = 1 # in reacher it indicates only how often it will be rendered for test
+mcts_rounds = 4
 
-max_n_episode = 100
+max_n_episode = 1000
 max_ep_draw_count = 1
 
 #####################################
@@ -29,8 +29,8 @@ max_ep_draw_count = 1
 history_count = 3
 history_features = 128
 
-her_state_size = 3
-her_state_features = 32
+her_state_size = 0
+her_state_features = 0
 
 #####################################
 # PG algorithm settings
@@ -46,12 +46,12 @@ gae_tau = 0.95
 # replay buffer
 #####################################
 
-replay_size = 310 # last 3 eps
+replay_size = 1010
 
-her_max_ratio = 5
+her_max_ratio = 0
 
-replay_reanalyze = true#false#
-replay_cleaning = true#false#
+replay_reanalyze = false#true#
+replay_cleaning = false#true#
 prob_treshold = 3.0
 
 replay_alpha = 0.7
@@ -100,7 +100,7 @@ tau_replay_counter = 10000
 
 max_n_step = 1#-10000#
 
-dbgout_train = false#true#
+dbgout_train = true#false#
 dbgout_ratio = false#true#
 dbgout = false#true#
 loss_debug = false#true

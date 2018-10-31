@@ -4,7 +4,7 @@ import numpy as np
 sys.path.append("PrioritizedExperienceReplay")
 from PrioritizedExperienceReplay.proportional import Experience as Memory
 
-from baselines.common.schedules import LinearSchedule
+from utils.learning_rate import LinearAutoSchedule as LinearSchedule
 
 class ReplayBuffer:
     def __init__(self, cfg, objective_id):
@@ -14,15 +14,14 @@ class ReplayBuffer:
 
         self.inds = None
 
-        self.count = 0
         self.beta = LinearSchedule(cfg['replay_beta_iters'],
                initial_p=cfg['replay_beta_base'],
                final_p=cfg['replay_beta_top'])
         self.mem = Memory(cfg['replay_size'], cfg['batch_size'], cfg['replay_alpha'])
 
     def sample(self, batch_size, critic):
-#        self.inds, data = zip(*self._sample(batch_size, critic))
-#        off_exc = '''
+        self.inds, data = zip(*self._sample(batch_size, critic))
+        off_exc = '''
         try: # due to buf od priority replay github code i am using
             self.inds, data = zip(*self._sample(batch_size, critic))
         except:
@@ -68,10 +67,8 @@ class ReplayBuffer:
     def _sample(self, batch_size, critic):
         count = 0
         while not count:
-            batch, _, inds = self.mem.select(self.beta.value(self.count))
+            batch, _, inds = self.mem.select(self.beta.value())
             data, local_forward, local_backward, delta, hashkey = zip(*batch)
-
-            self.count += 1
 
 # due to following uniq -> final batch will be most likely smaller than batch_size from config
 # therefore, adjust batch_size in config to reflect that .. avoiding to add here some approximations

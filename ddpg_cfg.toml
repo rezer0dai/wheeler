@@ -2,25 +2,25 @@
 # Most common to tune
 #####################################
 
-ddpg = false#true#
-gae = true#false#
+ddpg = true#false#
+gae = false#true#
 
-n_step = 1
-batch_size = 1
+n_step = 5
+batch_size = 16
 discount_rate = 0.995
-n_simulations = 6
+n_simulations = 8#20#1#12#
 n_critics = 1
-disjoint_critics = false
+disjoint_critics = false#true#
 
-critic_learn_delta = 5
+critic_learn_delta = 7
 
 lr_actor = 3e-4
 lr_critic = 1e-4
 
-mcts_rounds = 1 # in reacher it indicates only how often it will be rendered for test
+mcts_rounds = 4
 
-max_n_episode = 100
-max_ep_draw_count = 1
+max_n_episode = 100#70#400#2000#
+max_ep_draw_count = 8
 
 #####################################
 # neural nets settings
@@ -46,12 +46,12 @@ gae_tau = 0.95
 # replay buffer
 #####################################
 
-replay_size = 310 # last 3 eps
+replay_size = 1010 # remember about 10 eps
 
 her_max_ratio = 5
 
 replay_reanalyze = true#false#
-replay_cleaning = true#false#
+replay_cleaning = false#true#
 prob_treshold = 3.0
 
 replay_alpha = 0.7
@@ -69,7 +69,7 @@ action_repeat = 1#2#
 
 good_reach = 1
 advantages_enabled = true#false#
-advantages_boost = false#true#
+advantages_boost = true#false#
 normalize_advantages = false#true#
 
 attention_enabled = false#true#
@@ -77,7 +77,7 @@ attention_hidden = 64
 attention_amplifier = 2.0
 
 # reinforce or TD-lambda
-td_lambda_replay_count = 0
+td_lambda_replay_count = 10
 reinforce_clip = false
 tau_clip = 0
 
@@ -90,9 +90,9 @@ mcts_random_cap = 1000000
 actor_update_delay = 3
 critic_update_delay = 3
 
-tau_base = 5e-1
-tau_final = 1e-2
-tau_replay_counter = 10000
+tau_base = 5e-2
+tau_final = 1e-3
+tau_replay_counter = 1000000
 
 #####################################
 # debug and visuals
@@ -100,7 +100,7 @@ tau_replay_counter = 10000
 
 max_n_step = 1#-10000#
 
-dbgout_train = false#true#
+dbgout_train = true#false#
 dbgout_ratio = false#true#
 dbgout = false#true#
 loss_debug = false#true
