@@ -1,29 +1,21 @@
 import sys, os
 sys.path.append(os.path.join(sys.path[0], ".."))
 
-import gym
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-
 import numpy as np
+import random, toml, torch, gym
 
-import time, threading, math, random, sys
-from collections import deque, namedtuple, deque
-
-import toml
-cfg = toml.loads(open('cfg.toml').read())
-
-torch.set_default_tensor_type(cfg['tensor'])
+from utils.normalizer import *
+from utils.task import Task
+from utils.taskinfo import *
+from utils.taskmgr import *
+from utils.crossexp import *
 
 from agents.zer0bot import Zer0Bot
-from utils.task import Task
-from utils.curiosity import *
-from utils.replay import *
+import agents.ModelTorch as ModelTorch
 
-from utils.tnorm import *
+from utils.unity import unity_factory
+
+ # not testedm, just ported Unity-Reacher here, should works with minor bug fixes i guess, TODO : test ...
 
 CLOSE_ENOUGH = .05
 
@@ -33,6 +25,7 @@ def transform(obs):
         obs["observation"][3:],
         ])
 
+import gym
 ENV = gym.make("FetchReach-v1")
 
 def fun_reward(s, n, gs, objective_id, her):
@@ -49,169 +42,242 @@ def fun_reward(s, n, gs, objective_id, her):
 #    if her: print("HER", a, b)
     return -1 + .9 * int(a < b)
 
-def sample_goal(goal, target, n_target):
-    def noise_goal():
-#        return goal[3:6]
+def goal_distance(goal_a, goal_b):
+    assert goal_a.shape == goal_b.shape
+    return np.linalg.norm(goal_a - goal_b, axis=-1)
+
+def sample_goal(cfg, goal, target, n_target):
+    hs = cfg['her_state_size']
+    def noisy_goal():
+        ind = -(len(goal) - hs) // cfg['history_count']
+#        return goal[ind:ind+hs]
         for i in range(3):# be carefull extremly expensive
             radius = np.abs(np.random.rand() * CLOSE_ENOUGH)
             angle = np.random.rand() * np.pi * 2
             a = np.cos(angle) * radius
             b = np.sin(angle) * radius
-            ids = np.random.choice(3, 2, p=[1/3]*3, replace=False)
+            ids = np.random.choice(hs, 2, p=[1/hs]*hs, replace=False)
 
             g = goal.copy()
-            g[ids[0]] = g[ids[0] + 3] + a
-            g[ids[1]] = g[ids[1] + 3] + b
+            g[ids[0]] = g[ids[0] + ind] + a
+            g[ids[1]] = g[ids[1] + ind] + b
 
-            if np.abs(gym.envs.robotics.fetch_env.goal_distance(g[:3], g[3:2*3])) < CLOSE_ENOUGH:
+            if np.abs(
+                    gym.envs.robotics.fetch_env.goal_distance(
+                        g[:3], g[3:2*3])) < CLOSE_ENOUGH:
+
                 return g[:3]
-        return goal[3:6]
-    gs = noise_goal()
-    return (np.hstack([gs, target[3:]]).reshape(-1),
-            np.hstack([gs, n_target[3:]]).reshape(-1))
 
-# TODO : indexing in more nice way .. some abstraction -> wtf is 1 (state) 4 (next_state) 5 (n_reward) ...
-def update_goal(her_target, trajectory, objective_id, gamma):
-    goal, n_goal = sample_goal(
-#            trajectory[random.randint(0, len(trajectory)-1)][0],
-            trajectory[random.randint(0, len(trajectory)-1)][0],
-            her_target[0], her_target[4])
+        return goal[ind:ind+hs]
 
-    rewards = map(
-            lambda step: fun_reward(step[0], step[4], goal, objective_id, True), trajectory)
-    reward = n_reward(rewards, gamma)
+    gs = noisy_goal()
+    return (np.hstack([gs, target[hs:]]).reshape(-1),
+            np.hstack([gs, n_target[hs:]]).reshape(-1))
 
-    return (goal, her_target[1], her_target[2], her_target[3], n_goal, [reward], her_target[6])
+def goal_select(total_after, n_step):
+    if total_after <= n_step + 1: # only last n_state remainds
+        return 0
+    if random.randint(0, 2):
+        return random.randint(1, n_step)
+    return random.randint(1, total_after - 1 - n_step)
 
-# TODO : move to utils .. TODO : create utils ..
-def n_reward(rewards, gamma):
-    return sum(map(lambda t_r: t_r[1] * gamma**t_r[0], enumerate(rewards)))
-
-class FetchNReachTask(Task):
-    def __init__(self, cfg, encoder, xid = -1):
-        self.env = gym.make(cfg['task'])
-        self.encoder = encoder
+class FetchReachGym(Task):
+    def __init__(self, cfg, encoder, env, objective_id, bot_id, action_low, action_high, state_size):
+        self.encoder = encoder # well disable this until dont sync critic + actor to have same ..
         self.lock = threading.RLock()
+        self.state_size = state_size
 
-        self.cfg = cfg
-        self.states = []
-        init_state = self.reset()
-        state_size = len(init_state)
+        self.n_step = cfg['n_step']
+        self.her_size = cfg['her_state_size']
 
-        self.action_low = -1.
-        self.action_high = 1.
-        super(FetchNReachTask, self).__init__(
+        super().__init__(
                 cfg,
-                xid,
-                self.env,
-                4,
-                state_size)
+                env,
+                objective_id,
+                bot_id,
+                action_low, action_high)
 
-#        self.rewarder = CuriosityPrio(self, cfg)
-
-    def reset(self, seed = None):
-        state = super().reset(seed)
+    def reset(self, seed = None, test = False):
+        state = super().reset(seed)[0]
         self.goal = state["desired_goal"]
         state = transform(state)
         self.prev_state = np.zeros(len(state))
-        return state.reshape(-1)
-
-    def update_normalizer(self, states):
-        states = np.vstack(states)
-        with self.lock:
-            self.encoder.update(states)
-#            self.encoder[0].update(states[:, 3:])
-#            self.encoder[1].update(states[:, :3])
-        return
-
-    def new(self, i):
-        if self.xid == -1:
-            return FetchNReachTask(self.cfg, self.encoder, i)
-        return super(FetchNReachTask, self).new(i)
-
-    def make_replay_buffer(self, cfg, actor):
-        buffer_size = self.cfg['replay_size']
-        return ReplayBuffer(cfg, self.xid, actor, update_goal)
+        return [state.reshape(-1)]
 
     def step_ex(self, action, test = False):
-        self.n_steps += 1
-
-        state, reward, done, _ = self.env.step(action)
+        state, done, reward = self.env.step(self.bot_id, self.objective_id, action)
 
         self.goal = state["desired_goal"]
         state = transform(state)
         good = True
 
-#        reward = fun_reward(np.hstack([self.goal, self.prev_state]),
-#                np.hstack([self.goal, state]), self.goal, self.xid, False)
-#        self.prev_state = state
+        reward = fun_reward(np.hstack(
+            [self.goal, np.hstack([self.prev_state] * self.cfg['history_count'])]),
+                np.hstack([self.goal, np.hstack([state] * self.cfg['history_count'])]),
+                self.goal, self.objective_id, self.cfg, False)
 
-#        done = done if done else (-0 == reward)
-
-#        if (-0 == reward) and self.n_steps > 2: print("WE ARE DONE !!!", self.n_steps)
-
-#        if not self.xid: self.env.render()
+        self.prev_state = state
+        if test: state = [state] 
         return action, state, reward, done, good
 
-    def wrap_value(self, x):
-        return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
-
-    def wrap_action(self, x):
-        return torch.tanh(x)
-
-    def goal_met(self, states, rewards, n_steps):
-#        print("TEST : ", sum(rewards), len(rewards))
-        return any(-0 == r for r in rewards)
-        return -5 < sum(rewards[len(rewards)//2:])
-
-    def her_state(self):
+    def her_state(self, _):
         return self.goal
 
+    def update_goal(self, _, states, n_states, updates):
+        rews = []
+        stat = []
+        nstat = []
+        for i, (n, s, u) in enumerate(zip(states, n_states, updates)):
+            if u:
+                g = states[i + goal_select(len(states) - i, self.n_step)]
+                s, n = sample_goal(self.cfg, g, s, n)
+            else:
+                g = s[:self.her_size]
+            stat.append(s)
+            nstat.append(n)
+            rews.append(fun_reward(s, n, g, self.objective_id, self.cfg, True))
+        return (rews, stat, nstat)
+
+# move those to to replay buffer manger .. so at first create replay buffer manager lol ...
     def normalize_state(self, states): # here is ok to race ~ well not ok but i dont care now :)
-        states = np.array(states).reshape(-1, self.state_size() * self.cfg['history_count'] + self.cfg['her_state_size'])
-        return self.encoder.normalize(states)
-        s = self.encoder[0].normalize(states[:, 3:])
-        g = self.encoder[1].normalize(states[:, :3])
+        states = np.array(states).reshape(-1, 
+                self.state_size * self.cfg['history_count'] + self.her_size)
+
+        s = self.encoder[0].normalize(states[:, self.her_size:])
+        g = self.encoder[1].normalize(states[:, :self.her_size])
         return np.hstack([s, g])
 
-import agents.ModelTorch as ModelTorch
+# need to share params and need to be same as all simulations using!! -> move to TaskInfo!!
+    def update_normalizer(self, states):
+        states = np.vstack(states)
+        with self.lock:
+#            self.encoder.update(states)
+            self.encoder[0].update(states[:, self.her_size:])
+            self.encoder[1].update(states[:, :self.her_size])
+            self.encoder[1].update(states[:, self.her_size:self.her_size*2])
+
+    def goal_met(self, states, rewards, n_steps):
+        print("TEST : ", sum(rewards), sum(map(lambda r: r != 0, rewards)), len(rewards))
+        return -5 < sum(rewards[len(rewards)//2:])
+
+class FetchReachGymInfo(TaskInfo):
+    def __init__(self, cfg, encoder, replaybuf, factory, Mgr, args):
+        state_size = len(ENV.reset())
+        super().__init__(
+                state_size, 4, -1, +1,
+                cfg,
+                encoder, replaybuf,
+                factory, Mgr, args)
+
+    def new(self, cfg, bot_id, objective_id):
+        return FetchReachGym(cfg, self.encoder, 
+                self.env,
+                objective_id, bot_id,
+                self.action_low, self.action_high, self.state_size)
+    @staticmethod
+    def factory(ind): # bare metal task creation
+        print("created %i-th task"%ind)
+        CFG = toml.loads(open('cfg.toml').read())
+        return gym.make(CFG['task'])
+
+def load_encoder(cfg, state_size):
+    encoder_s = Normalizer(state_size * cfg['history_count'])
+    encoder_s.share_memory()
+    encoder_g = Normalizer(cfg['her_state_size'])
+    encoder_g.share_memory()
+
+    if os.path.exists("encoder_s.torch"):
+        encoder_s.load_state_dict(torch.load("encoder_s.torch"))
+        encoder_g.load_state_dict(torch.load("encoder_g.torch"))
+
+    return (encoder_s, encoder_g)
+
+def save_encoder(encoder):
+    torch.save(encoder[0].state_dict(), "encoder_s.torch")
+    torch.save(encoder[1].state_dict(), "encoder_g.torch")
 
 def main():
-    global cfg
-    print(cfg)
-    counter = 0
-    while True:
-        encoder = Normalizer(len(transform(ENV.reset())) * cfg['history_count'] + cfg['her_state_size'])
-        encoder_s = Normalizer(len(transform(ENV.reset())))
-        encoder_g = Normalizer(3)
+    CFG = toml.loads(open('cfg.toml').read())
+    torch.set_default_tensor_type(CFG['tensor'])
 
-        counter += 1
-        bot = Zer0Bot(
-            cfg,
-#            FetchNReachTask(cfg, (encoder_s, encoder_g)), # task "manager"
-            FetchNReachTask(cfg, encoder), # task "manager"
-            ModelTorch.ActorNetwork,
-            ModelTorch.CriticNetwork)
+    print(CFG)
 
-        bot.start()
+    DDPG_CFG = toml.loads(open('ddpg_cfg.toml').read())
 
-        z = 0
-        ROUNDS = cfg['mcts_rounds']
-        bot.task_main.training_status(False)
-        while not bot.task_main.learned():
-            bot.train(ROUNDS)
-            print()
-            bot.task_main.training_status(
-                    all(bot.task_main.test_policy(bot, True)[0] for _ in range(10)))
-            z+=1
+    state_size = len(ENV.reset())
+    encoder = load_encoder(DDPG_CFG, state_size)
 
-        print("\n")
-        print("="*80)
-        print("training over", counter, z * bot.task_main.subtasks_count() * ROUNDS)
-        print("="*80)
-        for _ in range(10): print("total reward : ", sum(bot.task_main.test_policy(bot, False)[2]))
-        while True: bot.task_main.test_policy(bot, True)
-        break
+    INFO = FetchReachGymInfo(
+            CFG, 
+            encoder, 
+            cross_exp_buffer(CFG),
+            FetchReachGymInfo.factory,
+            RemoteTaskManager, (LocalTaskManager, CFG['total_simulations']))
+
+    task = INFO.new(DDPG_CFG, 0, -1)
+    task.reset(None, True)
+
+    bot_ddpg = Zer0Bot(
+        0,
+        DDPG_CFG,
+        INFO,
+        ModelTorch.ActorNetwork,
+        ModelTorch.CriticNetwork)
+
+    enable_two_bots = '''
+    PPO_CFG = toml.loads(open('ppo_cfg.toml').read())
+
+    assert (
+        PPO_CFG['max_n_episode'] == DDPG_CFG['max_n_episode'] and
+        PPO_CFG['her_state_features'] == DDPG_CFG['her_state_features'] and
+        PPO_CFG['history_features'] == DDPG_CFG['history_features'] and
+        PPO_CFG['her_state_size'] == DDPG_CFG['her_state_size']
+        ), "check assert those need to have be the same in order of PPO to boost DDPG"
+
+    explorers = [ Zer0Bot(
+        1 + i,
+        PPO_CFG,
+        INFO,
+        ModelTorch.ActorNetwork,
+        ModelTorch.CriticNetwork) for i in range(2) ]
+    for bot in explorers:
+        bot.turnon() # launch critics!
+        bot.start() # ppo will run at background
+
+    single_bot_setting = '''
+    explorers = []
+#    '''
+
+    bot_ddpg.turnon()
+
+    task.training_status(
+            all(task.test_policy(bot_ddpg)[0] for _ in range(10)))
+
+    z = 0
+    while not task.learned():
+        bot_ddpg.train()
+
+        for bot in explorers: # we dont want to read last layer ~ that is for prob distrubution
+            bot.actor.model.beta_sync(['ex']) # update our explorer
+
+        save_encoder(encoder)
+
+        print()
+        task.training_status(
+                all(task.test_policy(bot_ddpg)[0] for _ in range(10)))
+        z+=1
+
+    for bot in explorers:
+        bot.stop.put(True)
+
+    print("\n")
+    print("="*80)
+    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("="*80)
+
+    for bot in explorers:
+        while not bot.stop.empty():
+            pass
 
 if '__main__' == __name__:
     main()

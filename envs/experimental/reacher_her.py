@@ -13,6 +13,8 @@ from utils.crossexp import *
 from agents.zer0bot import Zer0Bot
 import agents.ModelTorch as ModelTorch
 
+from utils.unity import unity_factory
+
 CLOSE_ENOUGH = 1.25#1.2#5.0#.05
 
 def transform(obs):
@@ -189,6 +191,22 @@ class ReacherInfo(TaskInfo):
                 objective_id, bot_id,
                 self.action_low, self.action_high, self.state_size)
 
+def load_encoder(cfg):
+    encoder_s = Normalizer((30 - 4) * cfg['history_count'])
+    encoder_s.share_memory()
+    encoder_g = Normalizer(cfg['her_state_size'])
+    encoder_g.share_memory()
+
+    if os.path.exists("encoder_s.torch"):
+        encoder_s.load_state_dict(torch.load("encoder_s.torch"))
+        encoder_g.load_state_dict(torch.load("encoder_g.torch"))
+
+    return (encoder_s, encoder_g)
+
+def save_encoder(encoder):
+    torch.save(encoder[0].state_dict(), "encoder_s.torch")
+    torch.save(encoder[1].state_dict(), "encoder_g.torch")
+
 def main():
     CFG = toml.loads(open('cfg.toml').read())
     torch.set_default_tensor_type(CFG['tensor'])
@@ -196,14 +214,8 @@ def main():
     print(CFG)
 
     DDPG_CFG = toml.loads(open('ddpg_cfg.toml').read())
+    encoder = load_encoder(DDPG_CFG)
 
-    encoder_s = Normalizer((30 - 4) * DDPG_CFG['history_count'])
-    encoder_s.share_memory()
-    encoder_g = Normalizer(DDPG_CFG['her_state_size'])
-    encoder_g.share_memory()
-    encoder = (encoder_s, encoder_g)
-
-    from utils.unity import unity_factory
 
     INFO = ReacherInfo(
             CFG, 
@@ -223,9 +235,6 @@ def main():
         ModelTorch.CriticNetwork)
 
 #    enable_two_bots = '''
-    # basic idea of this, is that PPO will greedy explore current policy, while DDPG will benefit
-    # from its experience ~ PPO no necessary to learn properly, target is DDPG
-    # we want also to load PPO model from DPPG one periodically, as so using PPO as explorer of close unknown
     PPO_CFG = toml.loads(open('ppo_cfg.toml').read())
 
     assert (
@@ -244,6 +253,7 @@ def main():
     for bot in explorers:
         bot.turnon() # launch critics!
         bot.start() # ppo will run at background
+
     single_bot_setting = '''
     explorers = []
 #    '''
@@ -254,12 +264,14 @@ def main():
             all(task.test_policy(bot_ddpg)[0] for _ in range(10)))
 
     z = 0
-    task.training_status(False)
     while not task.learned():
         bot_ddpg.train()
 
-        for bot in explorers:
-            bot.actor.model.beta_sync() # update our explorer
+        for bot in explorers: # we dont want to read last layer ~ that is for prob distrubution
+            bot.actor.model.beta_sync(['ex']) # update our explorer
+            # we want to proble DDPG by most of it network loaded but by PPO learned last layer
+
+        save_encoder(encoder)
 
         print()
         task.training_status(

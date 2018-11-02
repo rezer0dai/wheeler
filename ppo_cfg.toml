@@ -19,12 +19,14 @@ lr_critic = 1e-4
 
 mcts_rounds = 1 # in reacher it indicates only how often it will be rendered for test
 
-max_n_episode = 100
+max_n_episode = 30
 max_ep_draw_count = 1
 
 #####################################
 # neural nets settings
 #####################################
+
+use_batch_norm = true#false#
 
 history_count = 3
 history_features = 128

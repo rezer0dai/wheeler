@@ -26,6 +26,8 @@ max_ep_draw_count = 1
 # neural nets settings
 #####################################
 
+use_batch_norm = true#false#
+
 history_count = 3
 history_features = 128
 

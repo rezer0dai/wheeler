@@ -1,24 +1,20 @@
 import sys, os
 sys.path.append(os.path.join(sys.path[0], ".."))
 
-import gym
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-
 import numpy as np
+import toml, torch, gym
 
-import time, threading, math, random, sys
-from collections import deque, namedtuple, deque
+from utils.rbf import *
+from utils.task import Task
+from utils.taskinfo import *
+from utils.taskmgr import *
+from utils.normalizer import *
 
-import toml
-cfg = toml.loads(open('cfg.toml').read())
+from agents.zer0bot import Zer0Bot
+import agents.ModelTorch as ModelTorch
 
-torch.set_default_tensor_type(cfg['tensor'])
-
-ENV = gym.make(cfg['task'])
+from utils.curiosity import *
+from utils.replay import *
 
 def transform(s):
     return np.hstack([
@@ -27,158 +23,160 @@ def transform(s):
         s,
         ])
 
-def wtf(s, n, gs, objective_id, her):
-    return (-np.cos(s[1]) - np.cos(s[2]+s[1]), gs[0])
+def goal_select(total_after, n_step):
+    if total_after <= n_step + 1: # only last n_state remainds
+        return 0
+    if random.randint(0, 2):
+        return random.randint(1, n_step)
+    return random.randint(1, total_after - 1 - n_step)
 
-def fun_reward(s, n, gs, objective_id, her):
-    return -1 * int(-np.cos(s[1]) - np.cos(s[2]+s[1]) <= gs[0])
+def fun_reward(s, n, gs, objective_id, cfg, her):
+    state_size = (len(s) - cfg['her_state_size']) // cfg['history_count']
+    s_ = s[-state_size:]
+    return -1 * int(-np.cos(_s[1]) - np.cos(_s[2]+_s[1]) <= gs[0])
 
-def sample_goal(goal, target, n_target):
+def sample_goal(goal, target, n_target, cfg):
+    state_size = (len(s) - cfg['her_state_size']) // cfg['history_count']
     def noise_goal():
-        return [-np.cos(goal[1]) - np.cos(goal[2]+goal[1]) - 1e-3]
+        g = goal[-state_size:]
+        return [-np.cos(g[1]) - np.cos(g[2]+g[1]) - 1e-3]
     gs = noise_goal()
     return (np.hstack([gs, target[1:]]).reshape(-1),
             np.hstack([gs, n_target[1:]]).reshape(-1))
 
-# TODO : indexing in more nice way .. some abstraction -> wtf is 1 (state) 4 (next_state) 5 (n_reward) ...
-def update_goal(her_target, goal, trajectory, objective_id, gamma):
-    goal, n_goal = sample_goal(
-            goal,
-            her_target[0], her_target[4])
-
-    rewards = map(
-        lambda step: fun_reward(step[0], step[4], goal, objective_id, True), trajectory)
-    reward = n_reward(rewards, gamma)
-
-    assert cfg['n_step'] != 1 or reward == 0, "her malfunctioning {}".format(reward)
-
-    return (goal, her_target[1], her_target[2], her_target[3], n_goal, [reward], her_target[6])
-
-# TODO : move to utils .. TODO : create utils ..
-def n_reward(rewards, gamma):
-    return sum(map(lambda t_r: t_r[1] * gamma**t_r[0], enumerate(rewards)))
-
-from utils.replay import *
-from utils.tnorm import *
-
-from agents.zer0bot import Zer0Bot
-
-from utils.task import Task
-
 class AcroBotTask(Task):
-    def __init__(self, cfg, encoder, xid = -1):
-        self.cfg = cfg
-        self.env = gym.make(cfg['task'])
-        self.encoder = encoder
+    def __init__(self, 
+            cfg, env, 
+            objective_id, bot_id, 
+            action_low, action_high, state_size, 
+            encoder):
 
-        self.action_low = 0.
-        self.action_high = 1.
-
-        self.lock = threading.RLock()
-        init_state = self.reset()
-        state_size = len(init_state)
-
-        super(AcroBotTask, self).__init__(
+        super().__init__(
                 cfg,
-                xid,
-                self.env,
-                self.env.action_space.n,#3#
-                state_size)
+                env,
+                objective_id,
+                bot_id,
+                action_low, action_high)
+
+        self.state_size = state_size
+        self.encoder = encoder
 
     def reset(self, seed = None, test = False):
         state = super().reset(seed)
-        state = transform(state)
-        self.prev_state = np.zeros(len(state))
-        return state.reshape(-1)
-
-    def new(self, i):
-        if self.xid == -1:
-            return AcroBotTask(self.cfg, self.encoder, i)
-        return super(AcroBotTask, self).new(i)
+        state = transform(state[0])
+        return [state.reshape(-1)]
 
     def step_ex(self, action, test = False):
-        self.n_steps += 1
-
         action, a = self.softmax_policy(action, test)
-        state, reward, done, _ = self.env.step(a)
+        state, reward, done, _ = self.env.step(self.bot_id, self.objective_id, a)
 
         state = transform(state)
 
-        out = '''
-        while not reward and fun_reward(
-#                np.hstack([[0], self.prev_state]),
-                np.hstack([[0], state]),
-                np.hstack([[0], state]),
-                [1.], 0, False):
-            self.env.render()
-            print("inconsisten fun_rward with environment reward!", reward, done, wtf(np.hstack([[0], state]), np.hstack([[0], state]), [1.], 0, False), state)
-        '''
-        if done and not reward: print("\n","=" * 30," DONE WITH : ", self.n_steps, reward)
-        self.prev_state = state
-
-        return (action, state, reward, done, True)
-
-    def wrap_value(self, x):
-        return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
-
-    def wrap_action(self, x):
-        return torch.clamp(x, min=-1, max=+1)
+        if test: state = [state] 
+        return action, state, reward, done, True
 
     def goal_met(self, states, rewards, n_steps):
-#        return sum(rewards) > -60.
-        return sum(rewards) > -130
+        print("TEST ", sum(rewards))
+        return sum(rewards) > -130.
 
-    def make_replay_buffer(self, cfg, actor):
-        buffer_size = self.cfg['replay_size']
-        return ReplayBuffer(cfg, self.xid, actor, update_goal)
-
-    def her_state(self):
+    def her_state(self, _):
         return [1.]
 
-    def normalize_state(self, states):
-        states = np.array(states).reshape(-1, self.state_size() * self.cfg['history_count'] + self.cfg['her_state_size'])
+    def normalize_state__(self, states):
+        states = np.array(states).reshape(
+                -1, 
+                self.state_size * self.cfg['history_count'] + self.cfg['her_state_size'])
         return self.encoder.normalize(states)
 
-    def update_normalizer(self, states):
+    def update_normalizer__(self, states):
         states = np.vstack(states)
-        with self.lock:
-            self.encoder.update(states)
+        self.encoder.update(states)
+
+    def update_goal(self, _, states, n_states, updates):
+        rews = []
+        stat = []
+        nstat = []
+        for i, (n, s, u) in enumerate(zip(states, n_states, updates)):
+            if u:
+                g = states[i + goal_select(len(states) - i, self.cfg['n_step'])]
+                s, n = sample_goal(g, s, n, self.cfg)
+            else:
+                g = s[:1]
+            stat.append(s)
+            nstat.append(n)
+            rews.append(fun_reward(s, n, g, self.objective_id, self.cfg, True))
+        return (rews, stat, nstat)
+
+    def wrap_action(self, x):
+        return x
+
+class AcroBotInfo(TaskInfo):
+    def __init__(self, cfg, state_size, encoder, replaybuf, factory, Mgr, args):
+        super().__init__(
+                state_size, 2, 0, 1,
+                cfg,
+                encoder, replaybuf,
+                factory, Mgr, args)
+
+
+    def new(self, cfg, bot_id, objective_id):
+        return AcroBotTask(cfg, 
+                self.env,
+                objective_id, bot_id,
+                self.action_low, self.action_high, self.state_size, self.encoder)
+
+    @staticmethod
+    def factory(ind): # bare metal task creation
+        print("created %i-th task"%ind)
+        CFG = toml.loads(open('cfg.toml').read())
+        return gym.make(CFG['task'])
 
 def main():
-    print(cfg)
+    CFG = toml.loads(open('cfg.toml').read())
+    torch.set_default_tensor_type(CFG['tensor'])
 
-    import agents.ModelTorch as ModelTorch
+    print(CFG)
 
-    counter = 0
-    while True:
-        encoder = Normalizer(cfg['history_count'] * len(transform(ENV.reset())) + cfg['her_state_size'])
+    ENV = gym.make(CFG['task'])
+    state_size = len(transform(ENV.reset()))
+    DDPG_CFG = toml.loads(open('gym.toml').read())
+    encoder = Normalizer(
+            DDPG_CFG['history_count'] * state_size + DDPG_CFG['her_state_size'])
 
-        counter += 1
-        bot = Zer0Bot(
-            cfg,
-            AcroBotTask(cfg, encoder), # task "manager"
-            ModelTorch.ActorNetwork,
-            ModelTorch.CriticNetwork)
+    INFO = AcroBotInfo(
+            CFG, state_size, 
+            encoder, 
+            ReplayBuffer, 
+            AcroBotInfo.factory, LocalTaskManager, ())
 
-        bot.start()
+    task = INFO.new(DDPG_CFG, 0, -1)
 
-        z = 0
-        ROUNDS = cfg['mcts_rounds']
-        bot.task_main.training_status(False)
-        while not bot.task_main.learned():
-            bot.train(ROUNDS)
-            print()
-            bot.task_main.training_status(
-                    all(bot.task_main.test_policy(bot, True)[0] for _ in range(10)))
-            z+=1
+    bot = Zer0Bot(
+        0,
+        DDPG_CFG,
+        INFO,
+        ModelTorch.ActorNetwork,
+        ModelTorch.CriticNetwork)
 
-        print("\n")
-        print("="*80)
-        print("training over", counter, z * bot.task_main.subtasks_count() * ROUNDS)
-        print("="*80)
-        for i in range(10): print("total steps : ", len(bot.task_main.test_policy(bot, True)[2]))
-        while True: bot.task_main.test_policy(bot, True)
-        break
+    bot.turnon()
+
+    z = 0
+    task.training_status(False)
+    while not task.learned():
+        bot.train()
+        print()
+        task.training_status(
+                all(task.test_policy(bot)[0] for _ in range(10)))
+        z+=1
+
+    print("\n")
+    print("="*80)
+    print("training over", z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("="*80)
+
+    for i in range(10): print("total steps : training : %i :: %i >"%(
+        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+        len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:
     main()

@@ -4,7 +4,6 @@ sys.path.append(os.path.join(sys.path[0], ".."))
 import numpy as np
 import toml, torch, gym
 
-from utils.rbf import *
 from utils.task import Task
 from utils.taskinfo import *
 from utils.taskmgr import *
@@ -37,11 +36,14 @@ class PendelumInfo(TaskInfo):
     def __init__(self, cfg, replaybuf, factory, Mgr, args):
         env = self.factory(0)
         super().__init__(
-                3, 1, float(env.action_space.low[0]), float(env.action_space.high[0]),
+                len(env.reset()), 1, 
+                float(env.action_space.low[0]), float(env.action_space.high[0]),
                 cfg,
                 None, replaybuf,
                 factory, Mgr, args)
 
+    def wrap_action(self, x):
+        return x
 
     def new(self, cfg, bot_id, objective_id):
         return PendelumTask(cfg, 
@@ -87,11 +89,10 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", z * CFG['n_simulations'] * CFG['mcts_rounds'])
     print("="*80)
 
-    for i in range(10): print("total steps : %i < training : %i :: %i >"%(
-        counter, 
+    for i in range(10): print("total steps : training : %i :: %i >"%(
         z * CFG['mcts_rounds'] * CFG['n_simulations'],
         len(task.test_policy(bot)[2])))
 

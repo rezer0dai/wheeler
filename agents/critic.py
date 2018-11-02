@@ -194,7 +194,7 @@ class Critic(torch.multiprocessing.Process):
 
 # else we will do reinforce # i did not tried this part properly yet ..
         rewards = np.asarray(
-                policy.discount(rewards, self.discount))
+                policy.discount(rewards, self.discount)).reshape(-1, 1)
 
         self.model.fit( # lets bias it towards real stuff ...
             s_norm,
@@ -276,7 +276,7 @@ class Critic(torch.multiprocessing.Process):
             population = random.sample(
                     range(len(mini_batch)),
                     random.randint(
-                        1 + (len(mini_batch) - 1) // (1 + self.cfg['fast_exp_epochs']),
+                        1 + (len(mini_batch) - 1) // (1 + self.cfg['fast_exp_epochs'] // 2),
                         len(mini_batch) - 1))
             yield mini_batch[population].T
 
@@ -299,7 +299,7 @@ class Critic(torch.multiprocessing.Process):
     def _fast_exp(self):
         if not len(self.fast_experience):
             return None
-        if len(self.replay) < self.batch_size and self.fast_experience.shape[1] < self.batch_size:
+        if max(len(self.replay), self.fast_experience.shape[1]) < self.batch_size:
             return None
         batch = np.vstack(zip(*self.fast_experience))
         self.fast_experience = []
@@ -313,8 +313,7 @@ class Critic(torch.multiprocessing.Process):
             return self._locked_select()
 
     def _locked_select(self):
-        data = self.replay.sample(
-                    self.batch_size, self if not self.cfg['disjoint_critics'] else None) # we can not re-evaluate on incomplete episode data ...
+        data = self.replay.sample(self.batch_size, self)
         if None == data:
             return None
         states, _, actions, probs, features, n_states, n_rewards, n_features = data

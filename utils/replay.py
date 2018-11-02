@@ -32,10 +32,8 @@ class ReplayBuffer:
         return (data.T)
 
     def add(self, batch, prios, delta, hashkey):
-# if task is so hard to not do at least n_step per episode, then rethink different strategy ...
-# .. learning from semi-professional sampled episode, and use those as trampoline
-        if len(prios) < self.cfg['n_step'] * 2:
-            return
+#        if len(prios) < self.cfg['n_step']:
+#            return
         if len(prios) < delta % self.objective_id:
             return
 # can be interesting to filter what to remember now ~ by curiosity sounds interesting to me
@@ -57,8 +55,11 @@ class ReplayBuffer:
             return True
         for _ in range(10):
             _, w, _ = self.mem.select(1.)
-            if None == w:
-                continue
+#            try: # seems wrapper around this class need to be made ( prioexpreplay )
+#                if None == w:
+#                    continue
+#            except:
+#                continue
             status = prios.mean() > np.mean(w)
             if status:
                 return True
@@ -70,12 +71,10 @@ class ReplayBuffer:
             batch, _, inds = self.mem.select(self.beta.value())
             data, local_forward, local_backward, delta, hashkey = zip(*batch)
 
-# due to following uniq -> final batch will be most likely smaller than batch_size from config
-# therefore, adjust batch_size in config to reflect that .. avoiding to add here some approximations
             uniq = set(map(lambda i_b: i_b[0] - i_b[1], zip(inds, local_forward)))
             for i, b, f, d, k in zip(inds, local_backward, local_forward, delta, hashkey):
-                if count >= self.cfg['max_ep_draw_count']:
-                    break
+#                if count >= self.cfg['max_ep_draw_count']:
+#                    break
                 pivot = i - f
                 if pivot < 0 or pivot + b + f > len(self):
                     continue # temporarely we want to avoid this corner case .. TODO

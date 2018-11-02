@@ -1,135 +1,110 @@
 import sys, os
 sys.path.append(os.path.join(sys.path[0], ".."))
 
-import gym
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-from torch.autograd import Variable
-
 import numpy as np
+import toml, torch, gym
 
-import time, threading, math, random, sys
-from collections import deque, namedtuple, deque
-
-import toml
-cfg = toml.loads(open('cfg.toml').read())
-
-torch.set_default_tensor_type(cfg['tensor'])
+from utils.rbf import *
+from utils.task import Task
+from utils.taskinfo import *
+from utils.taskmgr import *
 
 from agents.zer0bot import Zer0Bot
+import agents.ModelTorch as ModelTorch
 
-from utils.task import Task
+from utils.curiosity import *
+from utils.replay import *
 
-import sklearn.pipeline
-import sklearn.preprocessing
-from sklearn.kernel_approximation import RBFSampler
-
-class CarTTask(Task):
-    def __init__(self, cfg, xid = -1):
-        self.cfg = cfg
-        self.env = gym.make(cfg['task'])
-
-        self.action_low = 0.
-        self.action_high = 1.
-
-        super(CarTTask, self).__init__(cfg, xid, self.env, 2, len(self.env.reset()))
-
-        self.reset()
-
-# default
-        self.DONE = 1.
-        self.FAIL = -40.
-        self.CONT = 1.
-
-        if 0 == xid:
-            print("XID0")
-            self.DONE = 1.
-            self.FAIL = -40.
-            self.CONT = 1.
-        if 1 == xid:
-            print("XID1")
-            self.DONE = .1
-            self.FAIL = -4.
-            self.CONT = .1
-        if 2 == xid:
-            print("XID2")
-            self.DONE = 40.
-            self.FAIL = -10.
-            self.CONT = .1
-
-    def reset(self, seed = None, test = False):
-        state = super(CarTTask, self).reset(seed, test)
-        return state
-
-    def new(self, i):
-        if self.xid == -1:
-            return CarTTask(self.cfg, i)
-        return super(CarTTask, self).new(i)
+class CartPoleTask(Task):
+    def __init__(self, cfg, env, objective_id, bot_id, action_low, action_high):
+        super().__init__(
+                cfg,
+                env,
+                objective_id,
+                bot_id,
+                action_low, action_high)
+        self.n_steps = 0
+        self.max_n_episode = cfg['max_n_episode']
 
     def step_ex(self, action, test = False):
         self.n_steps += 1
-
         action, a = self.softmax_policy(action, test)
-
-        state, reward, done, _ = self.env.step(a)
-#        state = self.state.transform(state)
-#        return action, state, reward, done, True
-
+        state, reward, done, _ = self.env.step(self.bot_id, self.objective_id, a)
         if done:
-            if self.n_steps > self.max_n_episode():
-                return action, state, self.DONE, True, False
-            else:
-                return action, state, self.FAIL, True, True
+            reward = -40 * int(self.n_steps < self.max_n_episode)#-40
+            self.n_steps = 0
+        if test: return action, [ state.reshape(-1) ], reward, done, True
+        return action, state, reward, done, True
 
-        return action, state, self.CONT, False, True
+    def goal_met(self, states, rewards, n_steps):
+        return sum(rewards) > 199 - 40
 
-    def wrap_value(self, x):
-        return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
+class CartPoleInfo(TaskInfo):
+    def __init__(self, cfg, replaybuf, factory, Mgr, args):
+        env = self.factory(0)
+        super().__init__(
+                len(env.reset()), 2, -2, +2,
+                cfg,
+                None, replaybuf,
+                factory, Mgr, args)
+
+    def new(self, cfg, bot_id, objective_id):
+        return CartPoleTask(cfg, 
+                self.env,
+                objective_id, bot_id,
+                self.action_low, self.action_high)
 
     def wrap_action(self, x):
 #        return torch.tanh(x)
-#        return F.sigmoid(x)
+#        return x
+#        return torch.sigmoid(x)
         return torch.clamp(x, min=-1, max=+2)
 
-    def goal_met(self, states, rewards, n_steps):
-        return len(rewards) > 199
-
+    @staticmethod
+    def factory(ind): # bare metal task creation
+        print("created %i-th task"%ind)
+        CFG = toml.loads(open('cfg.toml').read())
+        return gym.make(CFG['task'])
 
 def main():
-    print(cfg)
+    CFG = toml.loads(open('cfg.toml').read())
+    torch.set_default_tensor_type(CFG['tensor'])
 
-    import agents.ModelTorch as ModelTorch
+    print(CFG)
 
-    counter = 0
-    while True:
-        counter += 1
-        bot = Zer0Bot(
-            cfg,
-            CarTTask(cfg), # task "manager"
-            ModelTorch.ActorNetwork,
-            ModelTorch.CriticNetwork)
+    INFO = CartPoleInfo(CFG, ReplayBuffer, CartPoleInfo.factory, LocalTaskManager, ())
 
-        bot.start()
+    DDPG_CFG = toml.loads(open('cart.toml').read())
+#    DDPG_CFG = toml.loads(open('gym.toml').read())
 
-        z = 0
-        ROUNDS = cfg['mcts_rounds']
-        bot.task_main.training_status(False)
-        while not bot.task_main.learned():
-            bot.train(ROUNDS)
-            print()
-            bot.task_main.training_status(
-                    all(bot.task_main.test_policy(bot, True)[0] for _ in range(10)))
-            z+=1
+    task = INFO.new(DDPG_CFG, 0, -1)
 
-        print("\n")
-        print("="*80)
-        print("training over", counter, z * bot.task_main.subtasks_count() * ROUNDS)
-        print("="*80)
-        for i in range(10): print("total steps : ", len(bot.task_main.test_policy(bot, True)[2]))
-        while True: bot.task_main.test_policy(bot, True)
-        break
+    bot = Zer0Bot(
+        0,
+        DDPG_CFG,
+        INFO,
+        ModelTorch.ActorNetwork,
+        ModelTorch.CriticNetwork)
+
+    bot.turnon()
+
+    z = 0
+    task.training_status(False)
+    while not task.learned():
+        bot.train()
+        print()
+        task.training_status(
+                all(task.test_policy(bot)[0] for _ in range(10)))
+        z+=1
+
+    print("\n")
+    print("="*80)
+    print("training over", z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
+    print("="*80)
+
+    for i in range(10): print("total steps : training : %i :: %i >"%(
+        z * DDPG_CFG['mcts_rounds'] * DDPG_CFG['n_simulations'],
+        len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:
     main()

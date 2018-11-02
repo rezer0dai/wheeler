@@ -17,14 +17,14 @@ def initialize_weights(layer):
 
 class CriticNN(nn.Module):
 
-    def __init__(self, task, cfg):
-        super(CriticNN, self).__init__()
-        self.wrap_value = task.wrap_value
+    def __init__(self, state_size, action_size, wrap_value, cfg):
+        super().__init__()
+        self.wrap_value = wrap_value
 
         self.cfg = cfg
 
-        self.state_dim = cfg['her_state_size'] + task.state_size() * cfg['history_count'] + task.action_size()
-        self.action_dim = task.action_size()
+        self.state_dim = cfg['her_state_size'] + state_size * cfg['history_count'] + action_size
+        self.action_dim = action_size
 
         self.fcs1 = nn.Linear(self.state_dim,256,bias=False)
         self.fcs2 = nn.Linear(256,128)
@@ -54,14 +54,14 @@ class CriticNN(nn.Module):
 
 class ActorNN(nn.Module):
 
-    def __init__(self, task, cfg):
-        super(ActorNN, self).__init__()
-        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
+    def __init__(self, state_size, action_size, wrap_action, cfg):
+        super().__init__()
+        self.algo = DDPG(wrap_action) if cfg['ddpg'] else PPO(action_size)
 
         self.cfg = cfg
 
-        self.state_dim = cfg['her_state_size'] + task.state_size() * cfg['history_count']
-        self.action_dim = task.action_size()
+        self.state_dim = cfg['her_state_size'] + state_size * cfg['history_count']
+        self.action_dim = action_size
 
         self.fc1 = nn.Linear(self.state_dim,256)
         self.fc2 = nn.Linear(256,128)
@@ -85,5 +85,5 @@ class ActorNN(nn.Module):
     def remove_noise(self):
         return
 
-    def recomputable(self):
-        return False
+    def extract_features(self, states):
+        return torch.zeros(len(states), 1, 1, self.cfg['history_features'])

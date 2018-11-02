@@ -15,19 +15,25 @@ import threading, math, os
 
 #from linear_model import CriticNN
 #from linear_model import ActorNN
-from simple_model import CriticNN
-from simple_model import ActorNN
+#from simple_model import CriticNN
+#from simple_model import ActorNN
 
-#from gru_model import CriticQ as CriticNN
-#from lstm_model import ActorNN
-#from gru_model import CriticGRU as CriticNN
 from gru_model import CriticNN
 from gru_model import ActorNN
+#from lstm_model import ActorNN
 
 from utils.attention import SimulationAttention
 
 import pickle
 losses = []
+
+def filter_dict(full_dict, blacklist):
+    sheeps = list(filter(
+        lambda k: any(b in k for b in blacklist),
+        full_dict.keys()))
+    for sheep in sheeps:
+        full_dict.pop(sheep)
+    return full_dict
 
 class SoftUpdateNetwork:
     def soft_update(self, tau):
@@ -52,7 +58,7 @@ class SoftUpdateNetwork:
         self.target.share_memory()
         self.explorer.share_memory()
 
-    def _load_models(self, cfg, model_id, prefix):
+    def _load_models(self, cfg, model_id, prefix, blacklist = []):
         if not cfg['load']:
             return
         
@@ -61,8 +67,11 @@ class SoftUpdateNetwork:
         if not os.path.exists(target) or not os.path.exists(explorer):
             return
 
-        self.target.load_state_dict(torch.load(target), strict=False)
-        self.explorer.load_state_dict(torch.load(explorer), strict=False)
+        model = filter_dict(torch.load(target), blacklist)
+        
+        self.target.load_state_dict(model, strict=False)
+        model = filter_dict(torch.load(explorer), blacklist)
+        self.explorer.load_state_dict(model, strict=False)
 
     def _save_models(self, cfg, model_id, prefix):
         if not cfg['save']:
@@ -105,9 +114,9 @@ class ActorNetwork(SoftUpdateNetwork):
 
         self._load_models(self.cfg, self.actor_id, "actor")
 
-    def beta_sync(self):
+    def beta_sync(self, blacklist):
         # basically we using ppo as our explorer of close unknown
-        self._load_models(self.cfg, 0, "actor")
+        self._load_models(self.cfg, 0, "actor", blacklist)
         self.soft_update(1.)
 
     def fit(self, states, advantages, actions, tau):

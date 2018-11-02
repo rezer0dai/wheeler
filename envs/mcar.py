@@ -39,7 +39,6 @@ class MCarTask(Task):
         return [ self.encoder.transform(state[0]) ]
 
     def step_ex(self, action, test = False):
-        self.n_steps += 1
         state, reward, done, _ = self.env.step(self.bot_id, self.objective_id, action)
 
         if test: return action, [ self.encoder.transform(state.reshape(-1)) ], reward, done, True
@@ -130,12 +129,11 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
     print("="*80)
 
-    for i in range(10): print("total steps : %i < training : %i :: %i >"%(
-        counter, 
-        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+    for i in range(10): print("total steps : training : %i :: %i >"%(
+        z * DDPG_CFG['mcts_rounds'] * DDPG_CFG['n_simulations'],
         len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:

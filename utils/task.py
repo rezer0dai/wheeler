@@ -46,14 +46,13 @@ class Task(object, metaclass=abc.ABCMeta):
         r = 0
         for i, act in enumerate(action):
             for _ in range(self.cfg['action_repeat']):
-                Task.ep_count += int(0 == self.objective_id)
+                Task.ep_count += int(1 == self.objective_id)
                 act = np.clip(act, self.action_low, self.action_high)
                 a, state, reward, done, good = self.step_ex(act)
                 r += reward
                 if done:
                     break
             if any(a != act): # user want to change this action ( wrt gradient for training )
-                print("#"*100, "ACTION CHANGED", action[i], a, act) # debug for test cartpole + acro
                 action[i] = a
             #self.prev_state = self.env.pose
             if done:
@@ -88,7 +87,7 @@ class Task(object, metaclass=abc.ABCMeta):
                 a = np.clip(a[0], self.action_low, self.action_high)
                 action.append(a)
 
-            _, state, reward, done, _ = self.step_ex(action, True)
+            _, state, reward, done, _ = self.step_ex(np.asarray(action).reshape(-1), True)
 
             states.append(state)
             rewards.append(np.mean(reward))
@@ -98,12 +97,11 @@ class Task(object, metaclass=abc.ABCMeta):
     def softmax_policy(self, action, test):
         a = np.argmax(action)
 
-#        print(action)
-
-        if 0 == random.randint(0, 1):#len(action)):#1):#
+        if 0 == random.randint(0, 1):#len(action)):#
             return action, a
 
-        aprob = torch.softmax(torch.from_numpy(action.reshape(-1)), 0)
+        action = np.asarray(action).reshape(-1)
+        aprob = F.softmax(torch.from_numpy(action), 0)
         a = np.random.choice(len(action), 1, p=aprob).item()
         action = np.zeros(action.shape)
         action[a] = 1.
@@ -147,5 +145,5 @@ class Task(object, metaclass=abc.ABCMeta):
         pass
 
     @abc.abstractmethod
-    def step_ex(self, action):
+    def step_ex(self, action, test  = False):
         pass

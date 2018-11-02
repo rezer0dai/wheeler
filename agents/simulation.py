@@ -88,7 +88,7 @@ class Simulation(torch.multiprocessing.Process):
     def run(self):
         self.stop = False
 #        looper = threading.Thread(target=self._eval_loop)
-        looper = Process(target=self._eval_loop)#, args=(self.review, self.comitee, self.td_backdoor))
+        looper = Process(target=self._eval_loop)
         looper.start()
 
         while True:
@@ -130,7 +130,7 @@ class Simulation(torch.multiprocessing.Process):
 
             done = False
             while True:
-#                self._eval(self.td_backdoor)
+#                self._single_eval()
 
                 state = next_state
                 history.append(np.vstack(state))
@@ -183,6 +183,8 @@ class Simulation(torch.multiprocessing.Process):
 
             self._print_stats(e, rewards, a_pi)
 
+            self._single_eval()
+
             if any(c.empty() for c in self.complete):
 #this round does not contributed to actors training, redo!
                 self._run([seed + 1])
@@ -202,7 +204,7 @@ class Simulation(torch.multiprocessing.Process):
         if not self.cfg['dbgout']:
             print("\rstep:{:4d} :: {} [{}]".format(len(rewards), sum(rewards), self.count), end="")
         else:
-            print("\r[{:d}//{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
+            print("\r[{:d}>{:4d}::{:6d}] training = {:2d}, steps = {:3d}, max_step = {:3d}, reward={:2f} ::{}: {}".format(
                 self.bot_id, self.count, self.task.iter_count(), e, len(rewards), abs(self.best_max_step), sum(rewards), a_pi, debug_out), end="")
 
     def _do_fast_train(self, states, features, actions, probs, rewards, goods, delta):
@@ -253,13 +255,13 @@ class Simulation(torch.multiprocessing.Process):
 
         #we dont need to forward terminal state
         self._forward(
-            states[:-self.n_step],
-            rewards[:-self.n_step],
-            actions[:-self.n_step],
-            probs[:-self.n_step],
-            features[:-self.n_step],
-            n_states[:-self.n_step],
-            n_features[:-self.n_step],
+            states,
+            rewards,
+            actions,
+            probs,
+            features,
+            n_states,
+            n_features,
             e, True)
 
     def _process_data(self, states, actions, probs, features, rewards, indicies):
@@ -292,6 +294,12 @@ class Simulation(torch.multiprocessing.Process):
             while all(not c.empty() for c in self.review):
                 self._eval(self.td_backdoor)
 
+# far less resource greedy, should not have per impact
+    def _single_eval(self):
+        if any(c.empty() for c in self.review):
+            return
+        self._eval(self.td_backdoor)
+
     def _eval(self, td_gate):
 # ok lets examine updated actor, we doing off-policy anyway
 #        self.actor.reload(self.master_actor)
@@ -309,18 +317,22 @@ class Simulation(torch.multiprocessing.Process):
         threading.Thread(target=self._replay, args=(td_gate, s, a0, p0, f0, n, r, fn, )).start()
     def _replay(self, td_gate, s, a0, p0, f0, n, r, fn):
 
+        for a, b in zip(f0, fn): 
+            a.reshape(f0[0].shape)
+            b.reshape(fn[0].shape)
+
         s = np.vstack(s)
         a0 = np.vstack(a0)
         p0 = np.vstack(p0)
-        f0 = np.array([f.reshape(f0[0].shape) for f in f0])
+        f0 = np.vstack(f0)
         n = np.vstack(n)
-        fn = np.array([f.reshape(fn[0].shape) for f in fn])
+        fn = np.vstack(fn)
         r = np.vstack(r)
 #        td_gate.put([s, f0, r])
 #        return
 
-#        an, fn = self.actor.predict(n, fn)
-        an, _ = self.actor.predict(n, fn)
+#        an, fn = self.actor.predict(n, fn) # couple critic with target as well
+        an, _ = self.actor.predict(n, fn) # make more sense, only feature of explorer
 
         def batch():
             yield (s, a0, f0.reshape(fn.shape), n, an, fn, r)

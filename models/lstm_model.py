@@ -18,34 +18,43 @@ def initialize_weights(layer):
     nn.init.xavier_uniform_(layer.weight)
 
 class ActorNN(nn.Module):
-    def __init__(self, task, cfg):
+    def __init__(self, state_size, action_size, wrap_action, cfg):
         super(ActorNN, self).__init__()
-        self.algo = DDPG(task) if cfg['ddpg'] else PPO(task)
-        self.action_size = task.action_size()
+        self.algo = DDPG(wrap_action) if cfg['ddpg'] else PPO(action_size)
+        self.action_size = action_size
         self.cfg = cfg
 
         self.rnn = nn.LSTMCell(
-                task.state_size(), cfg['history_features'] // 2)
+                state_size, cfg['history_features'] // 2)
 
         if self.cfg['her_state_size']:
             self.her_state = nn.Linear(cfg['her_state_size'], cfg['her_state_features'])
 
-        self.apply(initialize_weights)
+        self.state_size = state_size
 
-        self.state_size = task.state_size()
+        self.ex = NoisyLinear(
+                cfg['her_state_features'] + cfg['history_features'] // 2,
+                action_size)
 
-        self.ex = nn.Linear(cfg['her_state_features'] + cfg['history_features'] // 2,
-                task.action_size())
+#        self.ex = nn.Linear(
+#                cfg['her_state_features'] + cfg['history_features'] // 2,
+#                action_size)
 
         self.concat = NoisyLinear(cfg['her_state_features'] + cfg['history_features'] // 2, 64)
-        self.output =  NoisyLinear(64, task.action_size())
+        self.output =  NoisyLinear(64, action_size)
+
+        self.apply(initialize_weights)
 
         self.features = None
+        self.bn = nn.BatchNorm1d(state_size)
 
     def forward(self, state, hidden):
         x = state[:, self.cfg['her_state_size']:]
 
         x = x.view(x.size(0), self.cfg['history_count'], -1)
+
+        if self.cfg['use_batch_norm']:
+            x = self.bn(x.transpose(1, 2)).transpose(1, 2)
 
         out, feature = self.rnn(x.transpose(0, 1)[0, :], hidden.view(2, state.size(0), -1))
         self.features = torch.cat([out, feature], 1).view(1, 1, -1)
@@ -74,12 +83,14 @@ class ActorNN(nn.Module):
     def remove_noise(self):
         pass
 
-    def recomputable(self):
-        return True#False#
-
     def extract_features(self, states):
-        states = states[:, self.cfg['her_state_size']:self.cfg['her_state_size']+self.state_size:]
+        states = states[:, 
+                self.cfg['her_state_size']:self.cfg['her_state_size']+self.state_size:]
         states = torch.from_numpy(states)
+
+        if self.cfg['use_batch_norm']:
+            states = states.unsqueeze(0).transpose(1, 2)
+            states = self.bn(states).transpose(1, 2).squeeze(0)
 
         hidden = torch.zeros(
                     2, 1, self.cfg['history_features'] // 2)
@@ -93,4 +104,4 @@ class ActorNN(nn.Module):
             feature = torch.cat(hidden, 1).view(1, 1, -1)
             features.append(feature.detach().cpu().numpy())
 
-        return features#[:-1]
+        return features[:-1]

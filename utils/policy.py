@@ -71,7 +71,7 @@ def vanila_pg(probs, loss):
         + using grads from policy probabilities, clamping them... 
         - however it can be way to obselete if replay buffer used ( big number {pos/neg} for prob ~ big change )
     """
-    print("VG")
+#    print("VG")
     grads = probs * loss * .1
     return grads 
 
@@ -134,14 +134,14 @@ def td_lambda(rewards, n_step, gamma):
         lambda i: sum(map(lambda t_r: t_r[1] * gamma**t_r[0], enumerate(rewards[i:i+n_step]))),
         range(len(rewards))))
 
-def discount(rewards, gamme):
+def discount(rewards, gamma):
     """
     this we mostly dont using, unless we want to go for REINFORCE
     code : MSFT reinforcement learning explained course
     """
-    discounted_r = np.zeros(len(r))
+    discounted_r = np.zeros(len(rewards))
     running_add = 0.
-    for t in reversed(range(0, len(r))):
-        running_add = running_add * gamma + r[t]
+    for t in reversed(range(0, len(rewards))):
+        running_add = running_add * gamma + rewards[t]
         discounted_r[t] = running_add
     return discounted_r
