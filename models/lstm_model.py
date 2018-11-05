@@ -40,8 +40,8 @@ class ActorNN(nn.Module):
 #                cfg['her_state_features'] + cfg['history_features'] // 2,
 #                action_size)
 
-        self.concat = NoisyLinear(cfg['her_state_features'] + cfg['history_features'] // 2, 64)
-        self.output =  NoisyLinear(64, action_size)
+        self.concat = NoisyLinear(cfg['her_state_features'] + cfg['history_features'] // 2, 128)
+        self.output =  NoisyLinear(128, action_size) # 64
 
         self.apply(initialize_weights)
 
@@ -68,15 +68,15 @@ class ActorNN(nn.Module):
                             state[:, :self.cfg['her_state_size']]))
             x = torch.cat([x, her_state], dim=1)
 
-        return self.algo(self.ex(x))
+#        return self.algo(self.ex(x))
 
         x = F.relu(self.concat(x))
         x = self.output(x)
-        return self.wrap_action(x)
+        return self.algo(x)
 
     def sample_noise(self):
         self.ex.sample_noise()
-        return
+#        return
         self.concat.sample_noise()
         self.output.sample_noise()
 

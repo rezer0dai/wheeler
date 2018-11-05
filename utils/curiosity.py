@@ -18,7 +18,8 @@ class CuriosityNN(nn.Module):
         self.action_size = action_size
         self.wrap_action = wrap_action
 
-        self.net = NoisyNet([self.state_size * 2, 64, 64, self.action_size])
+#        self.net = NoisyNet([self.state_size * 2, 64, 64, self.action_size])
+        self.net = NoisyNet([self.state_size * 2, 64, self.action_size]) # do it easy weight for tests
 
     def forward(self, state, next_state):
         state = torch.DoubleTensor(state).to(self.cfg['device'])
@@ -41,6 +42,8 @@ class CuriosityPrio:
         self.opt = torch.optim.Adam(self.rewarder.parameters(), 1e-4)
 
     def weight(self, s, n, a):
+        if not self.cfg['use_curiosity_buf']:
+            return np.abs(np.random.randn(len(a)))
         action = self.rewarder(s, n).detach()
         diff = (a - action)
         norm = np.divide(diff, self.action_range)
@@ -51,6 +54,8 @@ class CuriosityPrio:
         return reward
 
     def update(self, s, n, a):
+        if not self.cfg['use_curiosity_buf']:
+            return
         a = torch.DoubleTensor(a).reshape(len(a), -1).to(self.cfg['device'])
         def optim():
             self.opt.zero_grad()

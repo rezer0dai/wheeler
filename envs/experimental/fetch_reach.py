@@ -272,7 +272,7 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", counter, z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
     print("="*80)
 
     for bot in explorers:

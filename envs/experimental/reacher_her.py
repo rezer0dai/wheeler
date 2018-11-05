@@ -135,7 +135,7 @@ class Reacher(Task):
         return (rews, stat, nstat)
 
 # move those to to replay buffer manger .. so at first create replay buffer manager lol ...
-    def normalize_state(self, states): # here is ok to race ~ well not ok but i dont care now :)
+    def normalize_state__(self, states): # here is ok to race ~ well not ok but i dont care now :)
         states = np.array(states).reshape(-1, 
                 self.state_size * self.cfg['history_count'] + self.her_size)
 
@@ -144,7 +144,7 @@ class Reacher(Task):
         return np.hstack([s, g])
 
 # need to share params and need to be same as all simulations using!! -> move to TaskInfo!!
-    def update_normalizer(self, states):
+    def update_normalizer__(self, states):
         states = np.vstack(states)
         with self.lock:
 #            self.encoder.update(states)
@@ -175,7 +175,8 @@ class Reacher(Task):
 
     def goal_met(self, states, rewards, n_steps):
         print("TEST : ", sum(rewards), sum(map(lambda r: r != 0, rewards)), len(rewards))
-        return sum(abs(r) for r in rewards) > 30
+#        return -5 < sum(rewards[len(rewards)//2:])
+        return sum(abs(r) for r in rewards) > 5#30
 
 class ReacherInfo(TaskInfo):
     def __init__(self, cfg, encoder, replaybuf, factory, Mgr, args):
@@ -192,6 +193,7 @@ class ReacherInfo(TaskInfo):
                 self.action_low, self.action_high, self.state_size)
 
 def load_encoder(cfg):
+    return
     encoder_s = Normalizer((30 - 4) * cfg['history_count'])
     encoder_s.share_memory()
     encoder_g = Normalizer(cfg['her_state_size'])
@@ -204,6 +206,7 @@ def load_encoder(cfg):
     return (encoder_s, encoder_g)
 
 def save_encoder(encoder):
+    return
     torch.save(encoder[0].state_dict(), "encoder_s.torch")
     torch.save(encoder[1].state_dict(), "encoder_g.torch")
 
@@ -283,7 +286,7 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
     print("="*80)
 
     for bot in explorers:

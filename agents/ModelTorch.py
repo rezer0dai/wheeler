@@ -19,69 +19,14 @@ import threading, math, os
 #from simple_model import ActorNN
 
 from gru_model import CriticNN
-from gru_model import ActorNN
-#from lstm_model import ActorNN
+#from gru_model import ActorNN
+from lstm_model import ActorNN
 
 from utils.attention import SimulationAttention
+from utils.softnet import SoftUpdateNetwork
 
 import pickle
 losses = []
-
-def filter_dict(full_dict, blacklist):
-    sheeps = list(filter(
-        lambda k: any(b in k for b in blacklist),
-        full_dict.keys()))
-    for sheep in sheeps:
-        full_dict.pop(sheep)
-    return full_dict
-
-class SoftUpdateNetwork:
-    def soft_update(self, tau):
-        if not tau:
-            return
-
-        for target_w, explorer_w in zip(self.target.parameters(), self.explorer.parameters()):
-            target_w.data.copy_(
-                target_w.data * (1. - tau) + explorer_w.data * tau)
-
-        self.target.remove_noise()
-        self.explorer.sample_noise()
-
-    def get(self):
-        return self.target.state_dict(), self.explorer.state_dict()
-
-    def set(self, weights):
-        self.target.load_state_dict(weights[0])
-        self.explorer.load_state_dict(weights[1])
-
-    def share_memory(self):
-        self.target.share_memory()
-        self.explorer.share_memory()
-
-    def _load_models(self, cfg, model_id, prefix, blacklist = []):
-        if not cfg['load']:
-            return
-        
-        target = os.path.join(cfg['model_path'], '%s_target_%s'%(prefix, model_id))
-        explorer = os.path.join(cfg['model_path'], '%s_explorer_%s'%(prefix, model_id))
-        if not os.path.exists(target) or not os.path.exists(explorer):
-            return
-
-        model = filter_dict(torch.load(target), blacklist)
-        
-        self.target.load_state_dict(model, strict=False)
-        model = filter_dict(torch.load(explorer), blacklist)
-        self.explorer.load_state_dict(model, strict=False)
-
-    def _save_models(self, cfg, model_id, prefix):
-        if not cfg['save']:
-            return
-        target = os.path.join(cfg['model_path'], '%s_target_%s'%(prefix, model_id))
-        explorer = os.path.join(cfg['model_path'], '%s_explorer_%s'%(prefix, model_id))
-
-        torch.save(self.target.state_dict(), target)
-        torch.save(self.explorer.state_dict(), explorer)
-
 
 class ActorNetwork(SoftUpdateNetwork):
     def __init__(self, task_info, cfg, actor_id):
@@ -98,18 +43,24 @@ class ActorNetwork(SoftUpdateNetwork):
                 task_info.state_size, task_info.action_size, task_info.wrap_action, 
                 cfg).to(self.device)
 
-        self.explorer = ActorNN(
+        self.explorer = [ ActorNN(
                 task_info.state_size, task_info.action_size, task_info.wrap_action, 
-                cfg).to(self.device)
+                cfg).to(self.device) for _ in range(1 if not cfg['detached_actor'] else cfg['n_simulations']) ]
 
-        self.soft_update(1.)
+        self.sync_explorers()
 
         self.attention = None if not self.cfg['attention_enabled'] else SimulationAttention(
                 task_info.state_size, task_info.action_size, cfg)
 
+        self.params = [ list(explorer.parameters()) for explorer in self.explorer ]
+#        self.params = [ {'params':list(explorer.parameters())} for explorer in self.explorer ]
+        if self.attention:
+#            self.params.append({'params':self.attention.parameters()})
+            self.params.append(list(self.attention.parameters()))
+        self.params = np.hstack(self.params)
+
         self.opt = torch.optim.Adam(
-                self.explorer.parameters() if not self.attention else list(
-                    self.explorer.parameters()) + list(self.attention.parameters()),
+                self.params,
                 cfg['lr_actor'])
 
         self._load_models(self.cfg, self.actor_id, "actor")
@@ -117,7 +68,7 @@ class ActorNetwork(SoftUpdateNetwork):
     def beta_sync(self, blacklist):
         # basically we using ppo as our explorer of close unknown
         self._load_models(self.cfg, 0, "actor", blacklist)
-        self.soft_update(1.)
+        self.sync_explorers()
 
     def fit(self, states, advantages, actions, tau):
         states = torch.DoubleTensor(states).to(self.device)
@@ -131,11 +82,15 @@ class ActorNetwork(SoftUpdateNetwork):
             pgd_loss = grads.mean() if self.cfg['pg_mean'] else grads.sum()
 
             # safety checks
-            pgd_loss = -torch.clamp(pgd_loss, min=-self.cfg['loss_min'], max=self.cfg['loss_min'])
-            if pgd_loss != pgd_loss: # is nan!
-                return
-            if pgd_loss.abs() < 1e-5:
-                return
+            pgd_loss = -pgd_loss#torch.clamp(pgd_loss, min=-self.cfg['loss_min'], max=self.cfg['loss_min'])
+#            if pgd_loss != pgd_loss: # is nan!
+#                return
+#            if pgd_loss.abs() < 1e-5:
+#                return
+
+            #proceed to learning
+            self.opt.zero_grad()
+            nn.utils.clip_grad_norm_(self.params, 1)
 
             # debug out
             if self.cfg['dbgout_train']:
@@ -145,25 +100,25 @@ class ActorNetwork(SoftUpdateNetwork):
                 with open('losses.pickle', 'wb') as l:
                     pickle.dump(losses, l)
 
-            #proceed to learning
-            self.opt.zero_grad()
             pgd_loss.backward()#retain_graph=True)
 
         with self.lock:
             self.opt.step(local_optim)
-            self.soft_update(tau)
 
-            self._save_models(self.cfg, self.actor_id, "actor")
+            for i in range(len(self.explorer)):
+                self.soft_update(i, tau)
+                self._save_models(self.cfg, self.actor_id, "actor", i)
 
-    def predict_present(self, states, history):
+    def predict_present(self, objective_id, states, history):
+        ind = objective_id - 1 if self.cfg['detached_actor'] else 0
         states = torch.DoubleTensor(torch.from_numpy(
             states.reshape(-1, self.state_size))).to(self.device)
         history = torch.DoubleTensor(torch.from_numpy(
             history.reshape(1, states.size(0), -1))).to(self.device)
 
         with self.lock:
-            dist = self.explorer(states, history)
-            features = self.explorer.features
+            dist = self.explorer[ind](states, history)
+            features = self.explorer[ind].features
             return dist, features
 
     def predict_future(self, states, history):
@@ -193,13 +148,14 @@ class CriticNetwork(SoftUpdateNetwork):
                 task_info.state_size, task_info.action_size, task_info.wrap_value, 
                 cfg).to(self.device)
 
-        self.explorer = CriticNN(
+        self.explorer = [ CriticNN(
                 task_info.state_size, task_info.action_size, task_info.wrap_value, 
-                cfg).to(self.device)
+                cfg).to(self.device) for _ in range(cfg['n_critics']) ]
 
-        self.soft_update(1.)
+        self.sync_explorers()
 
-        self.opt = torch.optim.Adam(self.explorer.parameters(), cfg['lr_critic'])
+        self.opt = torch.optim.Adam([
+            {'params':explorer.parameters()} for explorer in self.explorer], cfg['lr_critic'])
 
         self.lock = threading.RLock()
 
@@ -207,7 +163,7 @@ class CriticNetwork(SoftUpdateNetwork):
 
         self._load_models(self.cfg, critic_id, "critic")
 
-    def fit(self, states, actions, history, rewards, tau):
+    def fit(self, cid, states, actions, history, rewards, tau):
         # return
         states = torch.DoubleTensor(torch.from_numpy(
             states.reshape(-1, self.state_size))).to(self.device)
@@ -220,23 +176,24 @@ class CriticNetwork(SoftUpdateNetwork):
             self.opt.zero_grad()
 #            loss = F.smooth_l1_loss(
             loss = F.mse_loss(
-                    self.explorer(states, actions, history), rewards)
+                    self.explorer[cid](states, actions, history), rewards)
+            nn.utils.clip_grad_norm_(self.explorer[cid].parameters(), 1)
             loss.backward()
 
         with self.lock:
             self.opt.step(optim)
-            self.soft_update(tau)
+            self.soft_update(cid, tau)
 
-            self._save_models(self.cfg, self.critic_id, "critic")
+            self._save_models(self.cfg, self.critic_id, "critic", cid)
 
-    def predict_present(self, states, actions, history):
+    def predict_present(self, cid, states, actions, history):
         states = torch.DoubleTensor(torch.from_numpy(
             states.reshape(-1, self.state_size))).to(self.device)
         history = history.view(1, states.size(0), -1).to(self.device)
         actions = actions.view(states.size(0), -1).to(self.device)
 
         with self.lock:
-            return self.explorer.forward(states, actions, history)
+            return self.explorer[cid].forward(states, actions, history)
 
     def predict_future(self, states, actions, history):
         states = torch.DoubleTensor(torch.from_numpy(

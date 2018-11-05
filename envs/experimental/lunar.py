@@ -64,7 +64,7 @@ class LunarLanderInfo(TaskInfo):
         env = self.factory(0)
         super().__init__(
                 len(env.reset()), 4 if 'cont' not in cfg['task'].lower() else 2,
-                0, 1,
+                -2, +2,
                 cfg,
                 encoder, replaybuf,
                 factory, Mgr, args)
@@ -123,11 +123,11 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
     print("="*80)
 
     for i in range(10): print("total steps : training : %i :: %i >"%(
-        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+        z * DDPG_CFG['mcts_rounds'] * DDPG_CFG['n_simulations'],
         len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:

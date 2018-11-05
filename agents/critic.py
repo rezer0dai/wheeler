@@ -15,7 +15,7 @@ from utils import policy
 class Critic(torch.multiprocessing.Process):
     def __init__(self, 
             cfg, model, task, task_info,
-            bot_id, xid, 
+            bot_id, objective_id, xid, 
             stop, exps, review, comitee, grads, stats, complete, 
             actor):
 
@@ -33,6 +33,7 @@ class Critic(torch.multiprocessing.Process):
 
         self.xid = xid
         self.cfg = cfg
+        self.objective_id = objective_id
 
         self.task = task
         self.fast_experience = []
@@ -56,12 +57,7 @@ class Critic(torch.multiprocessing.Process):
         self.lock = threading.RLock() # we protect only write operations ~ yeah yeah not so good :)
         self.replay = task_info.make_replay_buffer(self.cfg, task.objective_id)
 
-        self.model = model.new(
-                task_info, 
-                self.device, 
-                self.cfg, 
-                "%i_%i_%i"%(bot_id, task.objective_id, xid))
-        self.model.share_memory()
+        self.model = model
 
         # here imho configurable choise : use curiosity, td errors, random, or another method
         self.curiosity = CuriosityPrio(
@@ -70,7 +66,7 @@ class Critic(torch.multiprocessing.Process):
 
     def q_a_function(self, states, actions, features, td_targets):
 # even in multiprocess critic is shared from main process
-        q_a = self.model.predict_present(states, actions, features) # grads are active now
+        q_a = self.model.predict_present(self.xid, states, actions, features) # grads are active now
         if not self.cfg['advantages_enabled']:
             return q_a
 
@@ -150,6 +146,12 @@ class Critic(torch.multiprocessing.Process):
                 self.discount, self.cfg['gae_tau'])
 
         delta = len(states) % self.cfg['n_critics']
+        indices = range(
+                    ((delta % self.cfg['n_critics']) + self.xid - 1) % self.cfg['n_critics'],
+                    len(states), 
+                    self.cfg['n_critics'] if self.cfg['disjoint_critics'] else 1)
+        if len(indices) < 1:
+            indices = range(len(states))
         fast_experience = np.vstack(
             map(lambda i: (
                 s_norm[i],
@@ -158,10 +160,7 @@ class Critic(torch.multiprocessing.Process):
                 features[i],
                 n_norm[i],
                 n_rewards[i],
-                n_features[i]), range(
-                    ((delta % self.cfg['n_critics']) + self.xid - 1) % self.cfg['n_critics'],
-                    len(states), 
-                    self.cfg['n_critics'] if self.cfg['disjoint_critics'] else 1)))
+                n_features[i]), indices))
 
         if not len(self.fast_experience):
             self.fast_experience = fast_experience.T
@@ -197,6 +196,7 @@ class Critic(torch.multiprocessing.Process):
                 policy.discount(rewards, self.discount)).reshape(-1, 1)
 
         self.model.fit( # lets bias it towards real stuff ...
+            self.xid,
             s_norm,
             actions,
             features,
@@ -256,7 +256,7 @@ class Critic(torch.multiprocessing.Process):
         td_targets = n_rewards + self.n_discount * future
 
         self.counter += 1
-        self.model.fit(states, actions, features, td_targets,
+        self.model.fit(self.xid, states, actions, features, td_targets,
                 self.tau.value() * (0 == self.counter % self.cfg['critic_update_delay']))
 
         self.debug_out_ex = "[ TARGET:{:2f} replay::{} ]<----".format(
@@ -357,7 +357,7 @@ class Critic(torch.multiprocessing.Process):
         s_norm = self.task.normalize_state(states)
 
         actions = [e[0][2] for e in episode]
-        f, p = self.actor.reevaluate(s_norm, actions)
+        f, p = self.actor.reevaluate(self.objective_id, s_norm, actions)
 
         rewards, s, n_s = self.task.update_goal(
             *zip(*[( # magic *

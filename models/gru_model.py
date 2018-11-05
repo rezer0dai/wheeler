@@ -134,9 +134,6 @@ class ActorNN(nn.Module):
         return
         self.ex.remove_noise()
 
-    def recomputable(self):
-        return True#False#
-
     def extract_features(self, states):
 #        return None
         states = states[:, # we want to get context from before our state

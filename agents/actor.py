@@ -21,20 +21,22 @@ class Actor:
 #        if tau: print("\n WE DO LEARN ")
         self.model.fit(states, advantages, actions, tau)
 
-    def get_action_w_grad(self, state, history):
-        return self.model.predict_present(state, history)
+    def get_action_w_grad(self, objective_id, state, history):
+        return self.model.predict_present(objective_id, state, history)
 
-    def get_action_wo_grad(self, state, history):
-        d, f = self.model.predict_present(state, history)
+    def get_action_wo_grad(self, objective_id, state, history):
+        d, f = self.model.predict_present(objective_id, state, history)
         return d, f.detach().cpu().numpy()
 
     def predict(self, state, history):
         dist, features = self.model.predict_future(state, history)
         return dist.sample().detach().cpu().numpy(), features.detach().cpu().numpy()
 
-    def reevaluate(self, states, actions):
-        f = self.model.explorer.extract_features(states)
-        p = self.model.explorer(
+# kick out direct explorer touch ...
+    def reevaluate(self, objective_id, states, actions):
+        ind = (objective_id - 1) if self.cfg['detached_actor'] else 0
+        f = self.model.explorer[ind].extract_features(states)
+        p = self.model.explorer[ind](
                 torch.from_numpy(states),
                 torch.tensor(f)).log_prob(torch.tensor(actions)).detach().cpu().numpy()
         return f, p

@@ -87,11 +87,11 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
     print("="*80)
 
     for i in range(10): print("total steps : training : %i :: %i >"%(
-        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+        z * DDPG_CFG['mcts_rounds'] * DDPG_CFG['n_simulations'],
         len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:

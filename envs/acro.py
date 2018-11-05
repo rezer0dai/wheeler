@@ -33,10 +33,10 @@ def goal_select(total_after, n_step):
 def fun_reward(s, n, gs, objective_id, cfg, her):
     state_size = (len(s) - cfg['her_state_size']) // cfg['history_count']
     s_ = s[-state_size:]
-    return -1 * int(-np.cos(_s[1]) - np.cos(_s[2]+_s[1]) <= gs[0])
+    return -1 * int(-np.cos(s_[1]) - np.cos(s_[2]+s_[1]) <= gs[0])
 
 def sample_goal(goal, target, n_target, cfg):
-    state_size = (len(s) - cfg['her_state_size']) // cfg['history_count']
+    state_size = (len(goal) - cfg['her_state_size']) // cfg['history_count']
     def noise_goal():
         g = goal[-state_size:]
         return [-np.cos(g[1]) - np.cos(g[2]+g[1]) - 1e-3]
@@ -113,7 +113,7 @@ class AcroBotTask(Task):
 class AcroBotInfo(TaskInfo):
     def __init__(self, cfg, state_size, encoder, replaybuf, factory, Mgr, args):
         super().__init__(
-                state_size, 2, 0, 1,
+                state_size, 2, -2, +2,
                 cfg,
                 encoder, replaybuf,
                 factory, Mgr, args)
@@ -171,11 +171,11 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", z * DDPG_CFG['n_simulations'] * DDPG_CFG['mcts_rounds'])
     print("="*80)
 
     for i in range(10): print("total steps : training : %i :: %i >"%(
-        z * CFG['mcts_rounds'] * CFG['n_simulations'],
+        z * DDPG_CFG['mcts_rounds'] * DDPG_CFG['n_simulations'],
         len(task.test_policy(bot)[2])))
 
 if '__main__' == __name__:

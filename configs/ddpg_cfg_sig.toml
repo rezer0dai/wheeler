@@ -6,45 +6,39 @@ ddpg = true#false#
 gae = false#true#
 
 n_step = 5
-batch_size = 16#24
+batch_size = 16
 discount_rate = 0.995
 n_simulations = 1#20#12#
 n_critics = 1
 disjoint_critics = false#true#
 
-critic_learn_delta = 40
+critic_learn_delta = 7
 
-lr_actor = 1e-4
-lr_critic = 1e-3
+lr_actor = 3e-4
+lr_critic = 1e-4
 
-mcts_rounds = 3
+mcts_rounds = 4
 
-max_n_episode = 2000#300# # 300 is only for mcar we want to do it faster
-max_ep_draw_count = 40
-
-target_future_features = true#false#
-detach_eval = false#true#
-detached_actor = true#false#
+max_n_episode = 100#70#400#2000#
+max_ep_draw_count = 8
 
 #####################################
 # neural nets settings
 #####################################
 
-use_batch_norm = false#true#
-use_curiosity_buf = false#true#
+use_batch_norm = true#false#
 
-history_count = 4
-history_features = 64
+history_count = 3
+history_features = 128
 
-# for acrot we turning this on
-her_state_size = 0#1#
-her_state_features = 0#64#
+her_state_size = 0#3
+her_state_features = 0#32
 
 #####################################
 # PG algorithm settings
 #####################################
 
-fast_exp_epochs = 7
+fast_exp_epochs = 4
 ppo_eps = 2e-1
 loss_min = 1000
 
@@ -56,16 +50,17 @@ gae_tau = 0.95
 
 replay_size = 10000
 
-her_max_ratio = 3
+her_max_ratio = 5
 
 replay_reanalyze = true#false#
 replay_cleaning = false#true#
 prob_treshold = 3.0
 
 replay_alpha = 0.7
-replay_beta_iters = 10000
-replay_beta_base = 0.3
-replay_beta_top = 0.9
+replay_beta_iters = 6000
+replay_beta_base = 0.2
+replay_beta_top = 0.8
+replay_prio_eps = 1e-16
 
 #####################################
 # Quirks ~ related to gradients +-
@@ -84,7 +79,7 @@ attention_hidden = 64
 attention_amplifier = 2.0
 
 # reinforce or TD-lambda
-td_lambda_replay_count = 10#6#
+td_lambda_replay_count = 10
 reinforce_clip = false
 tau_clip = 0
 
@@ -94,14 +89,12 @@ mcts_random_cap = 1000000
 # Learning rates hyper params
 #####################################
 
-actor_update_delay = 3#1#
-critic_update_delay = 4#1#
+actor_update_delay = 3
+critic_update_delay = 3
 
-tau_base = 5e-2 # update from full episodes
-tau_final = 3e-2
-#tau_base = 5e-1
-#tau_final = 7e-3
-tau_replay_counter = 10000
+tau_base = 5e-2
+tau_final = 1e-3
+tau_replay_counter = 1000000
 
 #####################################
 # debug and visuals
@@ -111,7 +104,7 @@ max_n_step = 1#-10000#
 
 dbgout_train = true#false#
 dbgout_ratio = false#true#
-dbgout = true#false#
+dbgout = false#true#
 loss_debug = false#true
 
 #####################################
@@ -121,5 +114,5 @@ loss_debug = false#true
 device = "cpu"#"cuda"#
 tensor = "torch.DoubleTensor"#"torch.cuda.DoubleTensor"#
 model_path = "reacher_sig_dtb"
-load = false#true#
-save = false#true#
+load = true#false#
+save = true#false#

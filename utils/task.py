@@ -73,7 +73,6 @@ class Task(object, metaclass=abc.ABCMeta):
         states = []
         done = 0
         while not np.sum(done):
-            reward = []
             action = []
             for i, s in enumerate(state):
                 history[i].append(np.vstack(s))

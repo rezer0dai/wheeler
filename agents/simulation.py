@@ -30,6 +30,13 @@ class Simulation(torch.multiprocessing.Process):
 #        self.master_actor = shared_actor
 #        self.actor = Actor(model_actor.new(task_info, cfg))
 
+        self.critic = model.new(
+                task_info, 
+                self.task.device(),
+                self.cfg, 
+                "%i_%i"%(bot_id, self.objective_id))
+        self.critic.share_memory()
+
         self.best_max_step = self.cfg['max_n_step']
         self.delta_step = self.cfg['critic_learn_delta']
 
@@ -49,7 +56,8 @@ class Simulation(torch.multiprocessing.Process):
         self.review = [Queue() for _ in range(self.cfg['n_critics'])]
         self.comitee = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
         self.td_gate = [SimpleQueue() for _ in range(self.cfg['n_critics'])]
-        self.critics = [Critic(cfg, model, self.task, task_info, bot_id, i + 1,
+        self.critics = [Critic(cfg, self.critic, self.task, task_info, 
+            bot_id, self.objective_id, i,
             self.done[i],
             self.exps[i],
             self.review[i],
@@ -66,7 +74,7 @@ class Simulation(torch.multiprocessing.Process):
             c.start()
 
     def q_a_function(self, actions, probs, states, features, td_targets):
-        dist, features = self.actor.get_action_w_grad(states, features)
+        dist, features = self.actor.get_action_w_grad(self.objective_id, states, features)
 
         loss = [c.q_a_function(
                 states,
@@ -86,10 +94,12 @@ class Simulation(torch.multiprocessing.Process):
         return states, grads, actions
 
     def run(self):
-        self.stop = False
-#        looper = threading.Thread(target=self._eval_loop)
-        looper = Process(target=self._eval_loop)
-        looper.start()
+
+        if self.cfg['detach_eval']:
+            self.stop = False
+    #        looper = threading.Thread(target=self._eval_loop)
+            looper = Process(target=self._eval_loop)
+            looper.start()
 
         while True:
             seeds = self.keep_exploring.get()
@@ -101,8 +111,9 @@ class Simulation(torch.multiprocessing.Process):
         for c in self.done:
             c.put(True)
 
-        self.stop = True
-        looper.join()
+        if self.cfg['detach_eval']:
+            self.stop = True
+            looper.join()
 
     def _run(self, seeds):
         self.count += 1
@@ -130,7 +141,8 @@ class Simulation(torch.multiprocessing.Process):
 
             done = False
             while True:
-#                self._single_eval()
+                if not self.cfg['detach_eval']:
+                    self._single_eval()
 
                 state = next_state
                 history.append(np.vstack(state))
@@ -144,7 +156,7 @@ class Simulation(torch.multiprocessing.Process):
                     break
 
                 norm_state = self.task.normalize_state(state.copy())
-                dist, f_pi = self.actor.get_action_wo_grad(norm_state, features[-1])
+                dist, f_pi = self.actor.get_action_wo_grad(self.objective_id, norm_state, features[-1])
 
                 a_pi = dist.sample().detach().cpu().numpy() # sample from distribution does not have gradient!
                 action, next_state, reward, done, good = self.task.step(a_pi)
@@ -183,7 +195,8 @@ class Simulation(torch.multiprocessing.Process):
 
             self._print_stats(e, rewards, a_pi)
 
-            self._single_eval()
+            if not self.cfg['detach_eval']:
+                self._single_eval()
 
             if any(c.empty() for c in self.complete):
 #this round does not contributed to actors training, redo!
@@ -198,8 +211,8 @@ class Simulation(torch.multiprocessing.Process):
         while not self.stats[0].empty():
             debug_out = self.stats[0].get()
 
-        if 1 != self.objective_id:
-            return
+#        if 1 != self.objective_id:
+#            return
 
         if not self.cfg['dbgout']:
             print("\rstep:{:4d} :: {} [{}]".format(len(rewards), sum(rewards), self.count), end="")
@@ -331,8 +344,10 @@ class Simulation(torch.multiprocessing.Process):
 #        td_gate.put([s, f0, r])
 #        return
 
-#        an, fn = self.actor.predict(n, fn) # couple critic with target as well
-        an, _ = self.actor.predict(n, fn) # make more sense, only feature of explorer
+        if self.cfg['target_future_features']:
+            an, fn = self.actor.predict(n, fn) # couple critic with target as well
+        else:
+            an, _ = self.actor.predict(n, fn) # make more sense, only feature of explorer
 
         def batch():
             yield (s, a0, f0.reshape(fn.shape), n, an, fn, r)

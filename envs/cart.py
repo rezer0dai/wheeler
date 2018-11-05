@@ -74,8 +74,8 @@ def main():
 
     INFO = CartPoleInfo(CFG, ReplayBuffer, CartPoleInfo.factory, LocalTaskManager, ())
 
-    DDPG_CFG = toml.loads(open('cart.toml').read())
-#    DDPG_CFG = toml.loads(open('gym.toml').read())
+#    DDPG_CFG = toml.loads(open('cart.toml').read())
+    DDPG_CFG = toml.loads(open('gym.toml').read())
 
     task = INFO.new(DDPG_CFG, 0, -1)
 

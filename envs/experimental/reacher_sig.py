@@ -99,7 +99,7 @@ def main():
 
     print("\n")
     print("="*80)
-    print("training over", counter, z * CFG['n_simulations'] * CFG['mcts_rounds'])
+    print("training over", counter, z * BOT_CFG['n_simulations'] * BOT_CFG['mcts_rounds'])
     print("="*80)
 
 if '__main__' == __name__:
