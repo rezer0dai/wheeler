@@ -20,8 +20,8 @@ class ReplayBuffer:
         self.mem = Memory(cfg['replay_size'], cfg['batch_size'], cfg['replay_alpha'])
 
     def sample(self, batch_size, critic):
-        self.inds, data = zip(*self._sample(batch_size, critic))
-        off_exc = '''
+#        self.inds, data = zip(*self._sample(batch_size, critic))
+#        off_exc = '''
         try: # due to buf od priority replay github code i am using
             self.inds, data = zip(*self._sample(batch_size, critic))
         except:
