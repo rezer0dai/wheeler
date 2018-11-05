@@ -105,8 +105,9 @@ class ActorNetwork(SoftUpdateNetwork):
         with self.lock:
             self.opt.step(local_optim)
 
+            self.soft_mean_update(tau)
             for i in range(len(self.explorer)):
-                self.soft_update(i, tau)
+#                self.soft_update(i, tau)
                 self._save_models(self.cfg, self.actor_id, "actor", i)
 
     def predict_present(self, objective_id, states, history):

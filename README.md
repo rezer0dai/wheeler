@@ -1,31 +1,33 @@
 # Wheeler - Policy Gradient based experimental framework
-* WIP ~ work in progress, code quality is no good, neither ideas+implementation properly tested *
+* WIP ~ work in progress, not properly tested, except openai gym classic environments, TODO.. *
 
-Why Wheeler ? 
+Why name "Wheeler" ? 
 ===
 + i choose learning by reinventing wheel ( aka reimplementing other ideas ), however ...
 
 Features & Ideas of Wheeler experiment : 
 ===
-0. Actor-Critic, Off-Policy, Asynchronous, DDPG, PPO, vanilla PG, td-lambda, RBF, GAE, GRU/LSTM, Noisy Networks, OpenAi-Gym + Unity-MlAgents, PyTorch
 
-1. scaling : one actor vs multiple critics, every critic ( simulation ) has its own environment to test in parallel
-2. MULTIPLE GOALS : Via separating critics, you are able to define multiple reward functions ( preferable as sparse as possible )
+0. Soft Actor-Critic, Off-Policy, Asynchronous, DDPG, PPO, vanilla PG, td-lambda, GAE, GRU/LSTM, Noisy Networks, HER, RBF, state stacking, OpenAi-Gym + Unity-MlAgents, PyTorch
+
+1. **multiple agents** ( with potentially different algorithms DDPG + PPO ), working together ( envs/experimental/reacher_her.py )   
+2. multiple critics for one actor, every critic ( task / simulation ) has its own environment to test actor in parallel
+2. **MULTIPLE GOALS** : Via separating critics, you are able to define multiple reward functions ( preferable as sparse as possible )
   * imagine 3D navigation, therefore you can separate it to 3 reward function each rewards how far on particular dimension
   * or task where is most important end of episode rather the start, while start also important ( lunar lander )
-  * fetch + reach + move tasks
+  * reach + fetch + move tasks
 
-3. Noisy Networks for exploration ( as head of RNN )
-4. Replay buffer with support of HER by default ( and curiosity as priority weights + decider what to forgot ~ better say if new experience is worth of remembering )
-5. Attention mechanism (*Experimental + not properly tested yet*) on reward functions ( for multiple simulations with different rewards functions ) applied for learning actor
-6. RNN as actor network - GRU and also LSTM ( can be done also for critic )
-7. easy to adapt encoding on top of it : RBF sampler
-8. built in support for normalization of states ( see openai implementation of Reacher ~ neural nets + references )
+3. Noisy Networks for exploration ( as head after RNN )
+4. Replay buffer with support for HER by default ( and curiosity as priority weights + decider what to forgot ~ better say if new experience is worth of remembering )
+5. Attention mechanism (*Experimental + not properly tested yet*) on reward gradients ( for multi-ple simulations with different rewards functions ) applied for learning actor
+6. RNN as actor network - GRU and also LSTM ( can be done also for critic ) for enriching markovian state for RL
+7. easy to adapt encoding on top of it : RBF sampler, pre-trained CNN, normalizers 
+8. built in support for normalization of states ( see openai implementation of Reacher )
 
 X. other experiments : 
   + default SoftMax Policy implementation for discrete actions
   + MonteCarlo search configuration ( how many times to replay with same seed )
-  + immidiate learning for latest experience
+  + immidiate learning for latest experience ( can be postponed, learn very x-time stamp, learn y-times )
   + postponed learning, at the end of the episode, from replay buffer only ( from config, you can select how much )
   + select steps from episode you consider important ( good in task.py, and good_reach in cfg.toml ) to save to replay buffer
   + originally supposed to be ML framework independent ( pytorch + keras as backend, but when i move to DDPG, i move towards pytorch, in future i may again reintroduce keras/tensorflow )
@@ -34,24 +36,17 @@ X. other experiments :
 
 ### Requirements : 
   * pytorch
-  * gym + baselines ( baselines because i am reausing their LinearSchedule ) : 
+  * openai gym 
   ```
   pip install gym
   cd wheeler
-  git clone https://github.com/openai/baselines
   ```
   * toml : 
   ```pip install toml```
-  * PrioritizedExprienceReplay : 
+  * test ( pendelum ~230 eps, mountaincar with 300 time stemps cap : ~11 episodes, cartpole ~100 episodes, acro ~50 episodes ): 
   ```
   cd wheeler
-  git clone https://github.com/takoika/PrioritizedExperienceReplay
-  ```
-  * test : 
-  ```
-  cd wheeler
-  cp configs/acro.cfg.toml ./cfg.toml
-  python envs/acro.py
+  python envs/pendelum.py
   ```
     
 
@@ -65,8 +60,10 @@ Blog on what i have larned from OpenAi Gym set : Acro, Pendelum, MountainCar, Ca
 6. minute of thinking about ReplayBuffer ( with curiosity, with her, .. )
 7. my view why ReLU in NN layers is likely to be enough ( introducing non-linearity while preserving fair-enough gradients .. idea when thinking about softmax on last layer ~ logits vs output )
 8. MDP vs history on states ( multiple frames vs/combine RNN-alike-Memory )
+9. multiple tasks vs multiple critics and different reward functions
+10. multiple agents cooperating ( with potentionally different algorithms )
 
-important references : 
+important references ( more to add ) : 
 ===
   + https://github.com/openai/baselines
   + https://github.com/Kaixhin/NoisyNet-A3C

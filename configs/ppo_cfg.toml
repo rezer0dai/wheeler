@@ -23,7 +23,7 @@ max_n_episode = 70
 max_ep_draw_count = 1
 
 target_future_features = true#false#
-detach_eval = false#true#
+detach_eval = true#false#
 detached_actor = false#true#
 
 #####################################

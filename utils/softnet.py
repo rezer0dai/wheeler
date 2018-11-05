@@ -1,5 +1,6 @@
 import os
 import torch
+import numpy as np
 
 def filter_dict(full_dict, blacklist):
     sheeps = list(filter(
@@ -10,13 +11,27 @@ def filter_dict(full_dict, blacklist):
     return full_dict
 
 class SoftUpdateNetwork:
+    def soft_mean_update(self, tau):
+        if not tau:
+            return
+
+        params = np.mean([list(explorer.parameters()) for explorer in self.explorer], 0)
+
+        for target_w, explorer_w in zip(self.target.parameters(), params):
+            target_w.data.copy_(
+                target_w.data * (1. - tau) + explorer_w.data * tau)
+
+        self.target.remove_noise()
+        for explorer in self.explorer:
+            explorer.sample_noise()
+
     def soft_update(self, ind, tau):
         if not tau:
             return
 
         for target_w, explorer_w in zip(self.target.parameters(), self.explorer[ind].parameters()):
             target_w.data.copy_(
-                target_w.data * (1. - tau) + explorer_w.data * tau / len(self.explorer))
+                target_w.data * (1. - tau) + explorer_w.data * tau)# / len(self.explorer))
 
         self.target.remove_noise()
         self.explorer[ind].sample_noise()
