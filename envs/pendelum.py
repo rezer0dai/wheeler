@@ -36,7 +36,7 @@ class PendelumInfo(TaskInfo):
     def __init__(self, cfg, replaybuf, factory, Mgr, args):
         env = self.factory(0)
         super().__init__(
-                len(env.reset()), 1, 
+                len(env.reset()), 1,
                 float(env.action_space.low[0]), float(env.action_space.high[0]),
                 cfg,
                 None, replaybuf,
@@ -46,7 +46,7 @@ class PendelumInfo(TaskInfo):
         return x
 
     def new(self, cfg, bot_id, objective_id):
-        return PendelumTask(cfg, 
+        return PendelumTask(cfg,
                 self.env,
                 objective_id, bot_id,
                 self.action_low, self.action_high)
@@ -57,10 +57,10 @@ class PendelumInfo(TaskInfo):
         CFG = toml.loads(open('cfg.toml').read())
         return gym.make(CFG['task'])
 
-def main():
-    CFG = toml.loads(open('cfg.toml').read())
-    torch.set_default_tensor_type(CFG['tensor'])
+CFG = toml.loads(open('cfg.toml').read())
+torch.set_default_tensor_type(CFG['tensor'])
 
+def main():
     print(CFG)
 
     INFO = PendelumInfo(CFG, ReplayBuffer, PendelumInfo.factory, LocalTaskManager, ())

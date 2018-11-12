@@ -13,10 +13,10 @@ from utils.learning_rate import LinearAutoSchedule as LinearSchedule
 from utils import policy
 
 class Critic(torch.multiprocessing.Process):
-    def __init__(self, 
+    def __init__(self,
             cfg, model, task, task_info,
-            bot_id, objective_id, xid, 
-            stop, exps, review, comitee, grads, stats, complete, 
+            bot_id, objective_id, xid,
+            stop, exps, review, comitee, grads, stats, complete,
             actor):
 
         super().__init__()
@@ -36,7 +36,8 @@ class Critic(torch.multiprocessing.Process):
         self.objective_id = objective_id
 
         self.task = task
-        self.fast_experience = []
+        self.full_episode = []
+        self.last_train_cap = self.cfg['critic_learn_delta']
 
         self.device = task.device()
 
@@ -113,122 +114,67 @@ class Critic(torch.multiprocessing.Process):
             if None == exp:
                 break
 
-            full, info, exp = exp
+            full, delta, action, exp = exp
             if not full:
-                self._inject(info, exp) # action
+                self._inject(delta, action, exp) # action
             else:
-                self._train(info, exp) # delta
+                self._train(delta, action, exp) # delta
 
             if not self.cfg['critic_learn_delta']:
                 continue
-            if not len(self.fast_experience):
-                continue
-            if self.fast_experience.shape[1] < self.cfg['critic_learn_delta']:
-                continue
+            if len(self.full_episode) < self.last_train_cap:
+                continue # make sure this working lol ...
 
-            for batch in self._do_sampling():
+            self.last_train_cap += self.cfg['critic_learn_delta']
+
+            print("\n%s\nDO FAST TRAIN : %i\n%s\n"%('*' * 60, len(self.full_episode), '*' * 60))
+            for batch in self._do_sampling(delta):
                 self.review.put(batch)
 
-    def _inject(self, action, exp):
-#        return
-        states, rewards, actions, probs, features, n_states, n_features = exp
+    def _inject(self, e, action, exp):
+        states, rewards, actions, probs, features, n_states, n_features, good = exp
         if not len(states):
             return
-        actions, _, _, s_norm, n_norm = self.stack_inputs(actions, states, n_states)
-
-        n_rewards = policy.td_lambda(rewards, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
-                rewards, 
-                # here we need to append after state
-                self.model.predict_future(
-                    np.vstack([s_norm, [n_norm[-1-i] for i in range(self.n_step)]]), 
-                    np.vstack([actions, np.vstack([action] * self.n_step)]), 
-                    np.vstack(list(features) + [n_features[-1-i] for i in range(self.n_step)])),
-                self.discount, self.cfg['gae_tau'])
-
-        delta = len(states) % self.cfg['n_critics']
-        indices = range(
-                    ((delta % self.cfg['n_critics']) + self.xid - 1) % self.cfg['n_critics'],
-                    len(states), 
-                    self.cfg['n_critics'] if self.cfg['disjoint_critics'] else 1)
-        if len(indices) < 1:
-            indices = range(len(states))
-        fast_experience = np.vstack(
-            map(lambda i: (
-                s_norm[i],
-                actions[i],
-                probs[i],
-                features[i],
-                n_norm[i],
-                n_rewards[i],
-                n_features[i]), indices))
-
-        if not len(self.fast_experience):
-            self.fast_experience = fast_experience.T
-        else:
-            self.fast_experience = np.vstack([
-                self.fast_experience.T,
-                fast_experience]).T
-
-    def _train(self, delta, exp): 
-        states, rewards, actions, probs, features, n_states, n_features = exp
-        if not len(states):
-            return
-
-        actions, states, n_states, s_norm, n_norm = self.stack_inputs(actions, states, n_states)
 
         features = np.vstack(features)
+        actions, _, _, s_norm, n_norm = self.stack_inputs(actions, states, n_states)
         n_rewards = policy.td_lambda(rewards, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
-                rewards, self.model.predict_future(s_norm, actions, features), self.discount, self.cfg['gae_tau'])
+                rewards, self.model.predict_future(
+                    np.vstack([s_norm, n_norm[-1]]),
+                    np.vstack([actions, np.vstack([action])]),
+                    np.vstack([features, np.vstack([n_features[-1]])])),
+                self.discount, self.cfg['gae_tau'], stochastic=False)
 
-        self._update_memory(states, rewards, actions, probs, features,
-                n_states, n_rewards, n_features,
-                s_norm, n_norm, delta)
+        full_episode = np.vstack(zip(*[states, features, actions, probs, rewards, n_states, n_features, n_rewards, good]))
 
-        self._update_normalizer(states)
+        if not len(self.full_episode):
+            self.full_episode = full_episode
+        else:
+            self.full_episode = np.vstack([self.full_episode, full_episode])
 
-        self._td_lambda()
+    def _train(self, delta, action, exp):
+        self._inject(None, action, exp)
 
-        if not self.cfg['reinforce_clip']:
-            return
+        self._update_memory(delta)
 
-# else we will do reinforce # i did not tried this part properly yet ..
-        rewards = np.asarray(
-                policy.discount(rewards, self.discount)).reshape(-1, 1)
+        self._self_play()
+        # abandoned reinforce clip, as i think that is no go for AGI...
 
-        self.model.fit( # lets bias it towards real stuff ...
-            self.xid,
-            s_norm,
-            actions,
-            features,
-            rewards,
-            self.cfg['tau_clip'])
+        print("\n%s\nFULL EPISODE LENGTH : %i\n%s\n"%('*' * 60, len(self.full_episode), '*' * 60))
+        self.full_episode = []
+        self.last_train_cap = self.cfg['critic_learn_delta']
 
-    def _td_lambda(self):
-        for _ in range(self.cfg['td_lambda_replay_count']):
+    def _self_play(self):
+        for _ in range(self.cfg['full_replay_count']):
             samples = self._select()
             if None == samples:
                 continue
             self.review.put(samples.T)
         self.complete.put(True)
 
-    def _update_normalizer(self, states):
-        """ well this may race and mess up with other critics, but for now it is OK
-        """
-        self.task.update_normalizer(states[
-                    random.sample(range(len(states)), random.randint(1, len(states) - 1))])
-        if len(self.replay) < self.batch_size:
-            return None
-        data = self.replay.sample(self.batch_size, None)
-        if None == data:
-            return None
-        s, _, _, _, _, n, _, _ = data
-        self.task.update_normalizer(s)
-        self.task.update_normalizer(n)
-
-    def _update_memory(self,
-            states, rewards, actions, probs, features,
-            n_states, n_rewards, n_features,
-            s_norm, n_norm, delta):
+    def _update_memory(self, delta):
+        states, features, actions, probs, rewards, n_states, n_features, n_rewards, good = self.full_episode.T
+        actions, _, _, s_norm, n_norm = self.stack_inputs(actions, states, n_states)
 
         prios = self.curiosity.weight(s_norm, n_norm, actions)
         with self.lock:
@@ -241,7 +187,7 @@ class Critic(torch.multiprocessing.Process):
                     features[i],
                     n_states[i],
                     n_rewards[i],
-                    n_features[i]), range(len(states))),
+                    n_features[i]), filter(lambda i: bool(sum(good[i:i+self.cfg['good_reach']])), range(len(states)))),
                 prios, delta, hash(states.tostring()))
         self.curiosity.update(s_norm, n_norm, actions)
 
@@ -264,8 +210,8 @@ class Critic(torch.multiprocessing.Process):
 
         return td_targets
 
-    def _do_sampling(self):
-        batch = self._fast_exp()
+    def _do_sampling(self, delta):
+        batch = self._fast_exp(delta)
         if None == batch:
             return
 
@@ -296,14 +242,20 @@ class Critic(torch.multiprocessing.Process):
 
         yield batch.T
 
-    def _fast_exp(self):
-        if not len(self.fast_experience):
+    def _fast_exp(self, delta):
+        if max(len(self.replay), len(self.full_episode)) < self.batch_size:
             return None
-        if max(len(self.replay), self.fast_experience.shape[1]) < self.batch_size:
-            return None
-        batch = np.vstack(zip(*self.fast_experience))
-        self.fast_experience = []
-        return batch
+
+        indices = range(
+                    ((delta % self.cfg['n_critics']) + self.xid - 1) % self.cfg['n_critics'],
+                    len(self.full_episode.T),
+                    self.cfg['n_critics'] if self.cfg['disjoint_critics'] else 1)
+        if len(indices) < 1:
+            indices = range(len(self.full_episode.T))
+
+        states, features, actions, probs, _, n_states, n_features, n_rewards, _ = self.full_episode[indices].T
+        _, _, _, s_norm, n_norm = self.stack_inputs(actions, states, n_states)
+        return np.vstack(zip(*[s_norm, actions, probs, features, n_norm, n_rewards, n_features]))
 
     def _select(self):
         if len(self.replay) < self.batch_size:
@@ -316,6 +268,7 @@ class Critic(torch.multiprocessing.Process):
         data = self.replay.sample(self.batch_size, self)
         if None == data:
             return None
+
         states, _, actions, probs, features, n_states, n_rewards, n_features = data
         if not len(actions):
             return None
@@ -349,7 +302,7 @@ class Critic(torch.multiprocessing.Process):
         return (a, s, n, s_norm, n_norm)
 
 # main bottleneck of whole solution, but we experimenting so .. :)
-# also i think can be played with, when enough hardware/resources 
+# also i think can be played with, when enough hardware/resources
 #  -> properly scale, and do thinks on background in paralel..
 # + if main concern is speed i would not do it in python in first place ..
     def reanalyze_experience(self, episode, indices):
@@ -362,23 +315,23 @@ class Critic(torch.multiprocessing.Process):
         rewards, s, n_s = self.task.update_goal(
             *zip(*[( # magic *
                 e[0][1], # rewards .. just so he can forward it to us back
-                e[0][0], # states .. 
-                e[0][5], # states .. 
+                e[0][0], # states ..
+                e[0][5], # states ..
 #                e[0][2], # action .. well for now no need, however some emulator may need them
                 bool(random.randint(0, self.cfg['her_max_ratio'])), # update or not
                 ) for e in episode]))
 
         n = policy.td_lambda(rewards, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
-                rewards, 
-                self.model.predict_future(s_norm, np.asarray(actions), np.asarray(f)), 
+                rewards,
+                self.model.predict_future(s_norm, np.asarray(actions), np.asarray(f)),
                 self.discount, self.cfg['gae_tau'])
 
         return [(
             s[indices[i]],#e[0][0], # states we dont change them but update goal can change them ...
             rewards[indices[i]],#e[0][1], # rewards -> imho no need to return in current implementation..
             e[0][2], # actions we dont change them
-            p[indices[i]], 
-            f[indices[i]], 
+            p[indices[i]],
+            f[indices[i]],
             n_s[indices[i]],#e[0][5], # n-states we dont change them but ...
             n[indices[i]],
             f[(indices[i] + self.n_step) if indices[i]+self.n_step < len(f) else -1]

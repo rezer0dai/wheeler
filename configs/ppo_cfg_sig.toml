@@ -38,6 +38,7 @@ her_state_features = 0
 # PG algorithm settings
 #####################################
 
+postpone_exploring_while_learning = true#false#
 fast_exp_epochs = 4
 ppo_eps = 2e-1
 loss_min = 1000

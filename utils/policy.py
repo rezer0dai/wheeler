@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.distributions import Normal
+import random
 
 class DDPGDist():
     def __init__(self, actions):
@@ -53,7 +54,7 @@ def policy_debug_out(diff):
 
 def ppo(diff, loss, eps):
     """ paper : https://arxiv.org/abs/1707.06347
-        + using grads from policy probabilities, clamping them... 
+        + using grads from policy probabilities, clamping them...
         - however not efficient to use with replay buffer ( past action obsolete, ratio always clipped )
     """
 #    print("PPO")
@@ -68,12 +69,12 @@ def ppo(diff, loss, eps):
 
 def vanila_pg(probs, loss):
     """ paper : ...
-        + using grads from policy probabilities, clamping them... 
+        + using grads from policy probabilities, clamping them...
         - however it can be way to obselete if replay buffer used ( big number {pos/neg} for prob ~ big change )
     """
 #    print("VG")
     grads = probs * loss * .1
-    return grads 
+    return grads
 
 def ddpg(loss):
     """ paper : https://arxiv.org/abs/1509.02971
@@ -100,8 +101,7 @@ def policy_loss(old_probs, new_probs, loss, ppo_eps, dbgout = True):
     else: # offline policy, we fall back to vanilla PG
         return vanila_pg(new_probs, loss)
 
-#def compute_gae(rewards, values, gamma=0.99, tau=0.95):
-def gae(rewards, values, gamma, tau):
+def _gae(rewards, values, gamma, tau):
     """ paper : https://arxiv.org/abs/1506.02438
         explained : https://danieltakeshi.github.io/2017/04/02/notes-on-the-generalized-advantage-estimation-paper/
         code : https://github.com/higgsfield/RL-Adventure-2 : ppo notebook
@@ -124,6 +124,24 @@ def gae(rewards, values, gamma, tau):
         returns.insert(0, gae)
 
     return returns
+
+def gae(rewards, values, gamma, tau, stochastic=True):
+    if not stochastic:
+        return _gae(rewards, values, gamma, tau)
+
+    # TODO put this two ( 5, 3 ) magic constants to config ( test for better ones ? )
+    gran = min(5, len(rewards))
+    max_step = max(gran, len(rewards) // 3)
+
+    pos = 0
+    returns = []
+    while gran + pos + 1 + gran < len(rewards):
+        n_pos = pos + random.randint(gran, min(max_step, len(rewards) - pos - gran))
+        returns += _gae(rewards[pos:n_pos], values[pos:n_pos+1], gamma, tau)
+        pos = n_pos
+
+    return returns + _gae(rewards[pos:], values[pos:], gamma, tau)
+
 
 def td_lambda(rewards, n_step, gamma):
     """ paper : ...

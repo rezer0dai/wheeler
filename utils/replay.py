@@ -20,8 +20,8 @@ class ReplayBuffer:
         self.mem = Memory(cfg['replay_size'], cfg['batch_size'], cfg['replay_alpha'])
 
     def sample(self, batch_size, critic):
-#        self.inds, data = zip(*self._sample(batch_size, critic))
-#        off_exc = '''
+        self.inds, data = zip(*self._sample(batch_size, critic))
+        off_exc = '''
         try: # due to buf od priority replay github code i am using
             self.inds, data = zip(*self._sample(batch_size, critic))
         except:
@@ -45,7 +45,7 @@ class ReplayBuffer:
 
         for i, data in enumerate(batch): # we weight only with what we are working with
             self.mem.add(
-                    [data, i, len(prios) - i - 1, delta, hashkey], 
+                    [data, i, len(prios) - i - 1, delta, hashkey],
                     0. if (offset + i) % self.cfg['n_critics'] else prios[i])
 
     def _worth_experience(self, prios):
@@ -54,7 +54,10 @@ class ReplayBuffer:
         if len(self) < self.cfg['replay_size']:
             return True
         for _ in range(10):
-            _, w, _ = self.mem.select(1.)
+            data = self.mem.select(1.)
+            if None == data:
+                return True
+            _, w, _ = data
 #            try: # seems wrapper around this class need to be made ( prioexpreplay )
 #                if None == w:
 #                    continue
@@ -68,7 +71,10 @@ class ReplayBuffer:
     def _sample(self, batch_size, critic):
         count = 0
         while not count:
-            batch, _, inds = self.mem.select(self.beta.value())
+            data = self.mem.select(self.beta.value())
+            if None == data:
+                continue
+            batch, _, inds = data
             data, local_forward, local_backward, delta, hashkey = zip(*batch)
 
             uniq = set(map(lambda i_b: i_b[0] - i_b[1], zip(inds, local_forward)))
@@ -92,7 +98,7 @@ class ReplayBuffer:
     def _do_sample(self, full_episode, pivot, length, delta, critic, _):
         available_range = range(
                 ((delta % self.cfg['n_critics']) + self.objective_id - 1) % self.cfg['n_critics'],
-                length, 
+                length,
                 self.cfg['n_critics'] if self.cfg['disjoint_critics'] else 1)
 
         top = min(len(available_range), self.cfg['max_ep_draw_count'])
@@ -108,7 +114,7 @@ class ReplayBuffer:
 
     def update(self, prios):
         '''
-        replay buffer must be single thread style access, or properly locked ... 
+        replay buffer must be single thread style access, or properly locked ...
           ( sample, update, add )
           well in theory as it is not expanding, we dont care much of reads only .. for now lol ..
         '''
@@ -116,4 +122,4 @@ class ReplayBuffer:
         self.inds = None
 
     def __len__(self):
-        return self.mem.tree.filled_size()
+        return len(self.mem)
