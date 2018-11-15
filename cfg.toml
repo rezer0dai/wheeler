@@ -2,8 +2,8 @@ tensor = "torch.DoubleTensor"#"torch.cuda.DoubleTensor"#
 
 #task = "CartPole-v1"
 #task = "Acrobot-v1"
-task = "Pendulum-v0"
-#task = "MountainCarContinuous-v0"
+#task = "Pendulum-v0"
+task = "MountainCarContinuous-v0"
 #task = "LunarLanderContinuous-v2"
 #task = "LunarLander-v2"
 #task = "BipedalWalker-v2"
@@ -11,7 +11,7 @@ task = "Pendulum-v0"
 #task = "unity/Reacher_Linux/Reacher.x86_64"
 #task = "unity/Reacher_Linux_20/Reacher.x86_64"
 
-total_simulations = 20#1#
+total_simulations = 2#0#1#
 
 cross_exp_size = 5000 # heat map buffer (20*100) * eps
 

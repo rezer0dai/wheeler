@@ -78,9 +78,8 @@ class Task(object, metaclass=abc.ABCMeta):
                 history[i].append(np.vstack(s))
                 state = np.vstack(history[i]).squeeze(1)
                 state = self.transform_state(state, i)
-                norm_state = self.normalize_state(state.copy())
 
-                a, h = bot.act(norm_state, hiddens[i])
+                a, h = bot.act(state, hiddens[i])
                 hiddens[i] = h[0]
 
                 a = np.clip(a[0], self.action_low, self.action_high)
@@ -111,17 +110,6 @@ class Task(object, metaclass=abc.ABCMeta):
 
     def transform_state(self, state, ind = 0):
         return np.hstack([self.her_state(ind), state])
-
-    def normalize_state(self, state):
-# different than encoding
-# why ? because this is running normalization
-# it changing, and change also reasonability with state
-# aka recalculating reward is after aplying this almost impossible
-# ~ ok possible if this norm is reversible ofc ...
-        return state
-
-    def update_normalizer(self, states):
-        return
 
     def reset(self, seed = None, test = False):
         if None == seed:

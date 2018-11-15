@@ -6,15 +6,16 @@ Based on code from Marcin Andrychowicz
 -> copy-pasted to my project from : https://github.com/vitchyr/rlkit
   >> encouraged to check that nice project
 """
-import numpy as np
 import torch
+import torch.nn as nn
+import numpy as np
 
 class Normalizer(torch.nn.Module):
     def __init__(
             self,
             size,
             eps=1e-8,
-            default_clip_range=np.inf,
+            default_clip_range=torch.tensor(np.inf),
             mean=0,
             std=1,
     ):
@@ -32,12 +33,8 @@ class Normalizer(torch.nn.Module):
         self.synchronized = True
 
     def update(self, v):
-        if v.ndim == 1:
-            v = np.expand_dims(v, 0)
-        assert v.ndim == 2
-        assert v.shape[1] == self.size
-        self.sum.data = self.sum.data + torch.tensor(v.sum(axis=0))
-        self.sumsq.data = self.sumsq.data + torch.tensor(np.square(v).sum(axis=0))
+        self.sum.data = self.sum.data + v.sum(0)
+        self.sumsq.data = self.sumsq.data + (v ** 2).sum(0)
         self.count[0] = self.count[0] + v.shape[0]
         self.synchronized = False
 
@@ -48,30 +45,19 @@ class Normalizer(torch.nn.Module):
             clip_range = self.default_clip_range
 
         # convert back to numpy ( torch is just for sharing data between workers )
-        std = self.std.detach().numpy()
-        mean = self.mean.detach().numpy()
+        std = self.std.detach()
+        mean = self.mean.detach()
 
-        if v.ndim == 2:
-            mean = mean.reshape(1, -1)
-            std = std.reshape(1, -1)
-        return np.clip((v - mean) / std, -clip_range, clip_range)
+        mean = mean.reshape(1, -1)
+        std = std.reshape(1, -1)
+        return torch.clamp((v - mean) / std, -clip_range, clip_range)
 
     def _synchronize(self):
         self.mean.data = self.sum.detach() / self.count[0]
         self.std.data = torch.sqrt(
-            np.maximum(
-                np.square(self.eps),
+            torch.max(
+                torch.tensor(self.eps ** 2),
                 self.sumsq.detach() / self.count.detach()[0] - (self.mean.detach() ** 2)
             )
         )
         self.synchronized = True
-
-class IdentityNormalizer(object):
-    def __init__(self, *args, **kwargs):
-        pass
-
-    def update(self, v):
-        pass
-
-    def normalize(self, v, clip_range=None):
-        return v

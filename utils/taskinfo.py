@@ -2,10 +2,10 @@ import abc
 import torch
 
 class TaskInfo:
-    def __init__(self, 
+    def __init__(self,
             state_size, action_size, action_low, action_high,
             cfg, # general config with task info
-            encoder, replaybuf, 
+            replaybuf,
             factory, Mgr, args):
 
         self.state_size = state_size
@@ -18,7 +18,6 @@ class TaskInfo:
         self.cfg = cfg
         self.env = Mgr(factory, *args)
         self.replaybuf = replaybuf
-        self.encoder = encoder
 
     def wrap_value(self, x):
         return torch.clamp(x, min=self.cfg['min_reward_val'], max=self.cfg['max_reward_val'])
@@ -26,9 +25,8 @@ class TaskInfo:
     def wrap_action(self, x):
         return torch.clamp(x, min=self.action_low, max=self.action_high)
 
-    def make_replay_buffer(self, cfg, objective_id):
-        buffer_size = cfg['replay_size']
-        return self.replaybuf(cfg, objective_id)
+    def make_replay_buffer(self, cfg):
+        return self.replaybuf(cfg)
 
     @abc.abstractmethod
     def new(self, cfg, bot_id, objective_id):

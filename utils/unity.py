@@ -1,9 +1,9 @@
 import numpy as np
-import toml, threading, os
+import threading, os
 from unityagents import UnityEnvironment
 from torch.multiprocessing import SimpleQueue
 
-# all this runs on server ~ main process or server one ~ side 
+# all this runs on server ~ main process or server one ~ side
 #       ( as we want to proxy it trough LocalTaskManager )
 
 class UnityEnv:
@@ -90,7 +90,7 @@ class UnityGroupSync:
             data = data[0]
 
         return data
-        
+
     def _barier(self, env, ind, cmd, data):
         if not self._pass_trough(ind, cmd, data):
             return

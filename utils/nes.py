@@ -9,7 +9,7 @@ import numpy as np
 def initialize_weights(layer):
     if type(layer) not in [NoisyLinear, ]:
         return
-    nn.init.xavier_uniform_(layer.weight)
+    nn.init.kaiming_uniform_(layer.weight)
 
 class NoisyLinear(nn.Linear):
     def __init__(self, in_features, out_features):
@@ -35,8 +35,9 @@ class NoisyNet(nn.Module):
         # TODO : properly expose interface to remove/select noise in selective way
         self.layers = [ NoisyLinear(layer, layers[i+1]) for i, layer in enumerate(layers[:-1]) ]
 
-    def parameters(self):
-        return np.concatenate([list(layer.parameters()) for layer in self.layers])
+        for i, layer in enumerate(self.layers):
+            for j, p in enumerate(layer.parameters()):
+                self.register_parameter("neslayer_%i_%i"%(i, j), p)
 
     def sample_noise(self):
         for layer in self.layers:
