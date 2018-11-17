@@ -51,5 +51,5 @@ class ActorCritic(nn.Module):
         states, _ = self.norm(states, history_context)
         return self.critic[ind](states, actions)
 
-    def features(self, states):
+    def extract_features(self, states):
         return self.norm.extract_features(states)

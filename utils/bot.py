@@ -19,10 +19,10 @@ class Bot(SoftUpdateNetwork):
         self.ac_explorer = ActorCritic(
                 encoder,
                 [Actor(
-                    encoder.out_size(), action_size, wrap_action, cfg
+                    encoder.total_size(), action_size, wrap_action, cfg
                     ) for i in range(1 if not cfg['detached_actor'] else cfg['n_simulations'])],
                 [Critic(
-                    encoder.out_size(), action_size, wrap_value, cfg
+                    encoder.total_size(), action_size, wrap_value, cfg
                     ) for i in range(cfg['n_simulations'])])
 
         self.attention = None if not self.cfg['attention_enabled'] else SimulationAttention(state_size, action_size, cfg)
@@ -38,10 +38,10 @@ class Bot(SoftUpdateNetwork):
         self.ac_target = ActorCritic(
                 encoder,
                 [Actor(
-                    encoder.out_size(), action_size, wrap_action, cfg
+                    encoder.total_size(), action_size, wrap_action, cfg
                     )],
                 [Critic(
-                    encoder.out_size(), action_size, wrap_value, cfg
+                    encoder.total_size(), action_size, wrap_value, cfg
                     ) for i in range(cfg['n_simulations'])])
         # sync
         self.sync_explorers(update_critics=True)
@@ -107,8 +107,7 @@ class Bot(SoftUpdateNetwork):
         self.sync_explorers() # load only alpha actor, keep critics our own
 
     def reevaluate(self, ind, states, actions):
-        s, f = self.ac_explorer.actor[ind].extract_features(states)
-        p = self.ac_explorer.actor[ind](
-                s,
-                torch.tensor(f)).log_prob(torch.tensor(actions)).detach().cpu().numpy()
+        s, f = self.ac_explorer.extract_features(states)
+        p = self.ac_explorer.actor[ind](s).log_prob(
+                torch.tensor(actions)).detach().cpu().numpy()
         return f, p

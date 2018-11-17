@@ -26,9 +26,6 @@ class RbfState:
         self.featurizer.fit(self.scaler.transform(observation_examples))
         self.size = sum(components)
 
-    def out_size(self):
-        return self.size
-
     def _sampler(self, env):
         return np.array([env.observation_space.sample() for x in range(10000)])
 

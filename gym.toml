@@ -8,14 +8,14 @@ gae = true#false#
 n_step = 1#5
 batch_size = 256#16#24
 discount_rate = 0.995
-n_simulations = 3#20#12#
+n_simulations = 1#20#12#
 
 send_exp_delta = 10
-critic_learn_delta = 80
-fast_exp_epochs = 20
-full_replay_count = 40
+critic_learn_delta = 30
+fast_exp_epochs = 50
+full_replay_count = 100
 
-lr_actor = 1e-3
+lr_actor = 1e-4
 lr_critic = 1e-4
 
 mcts_rounds = 3
@@ -32,7 +32,7 @@ detached_actor = true#false#
 history_count = 4
 history_features = 64
 
-# for acrot we turning this on
+# for acrobot we turning this on
 her_state_size = 0#1#
 her_state_features = 0#64#
 
@@ -40,7 +40,7 @@ her_state_features = 0#64#
 # PG algorithm settings
 #####################################
 
-postpone_exploring_while_learning = 3 # in terms of seconds ..
+postpone_exploring_while_learning = 1 # in terms of seconds ..
 
 ppo_eps = 2e-1
 loss_min = 1000
@@ -76,14 +76,14 @@ advantages_enabled = true#false#
 advantages_boost = true#false#
 normalize_advantages = false#true#
 
-attention_enabled = true#false#
+attention_enabled = false#true#
 attention_hidden = 64
 attention_amplifier = 2.0
 
 mcts_random_cap = 1000000
 
 # temporary flag just for replay buffer
-use_curiosity_buf = false#true#
+use_curiosity_buf = true#false#
 
 #####################################
 # Learning rates hyper params
@@ -100,7 +100,7 @@ tau_replay_counter = 10000
 # debug and visuals
 #####################################
 
-max_n_step = 1#-10000#
+max_n_step = -10000#1#
 
 dbgout_train = true#false#
 dbgout_ratio = false#true#

@@ -8,9 +8,6 @@ from utils.replay import ReplayBuffer
 from collections import deque
 
 class Task(object, metaclass=abc.ABCMeta):
-    ep_count = 0
-    training_finished = False
-
     def __init__(self, cfg, env, objective_id, bot_id, action_low, action_high):
         self.cfg = cfg
         self.env = env
@@ -21,15 +18,7 @@ class Task(object, metaclass=abc.ABCMeta):
         self.action_high = action_high
 
         self.env.register(self.bot_id, self.objective_id)
-# globals
-    def iter_count(self):
-        return Task.ep_count
-    def episode_counter(self):
-        return Task.ep_count
-    def learned(self):
-        return Task.training_finished
-    def training_status(self, status):
-        Task.training_finished = status
+        self.ep_count = 0
 # local info
     def name(self):
         return self.cfg['task']+"-def[%i]"%self.objective_id
@@ -41,12 +30,14 @@ class Task(object, metaclass=abc.ABCMeta):
         if 1 == torch.cuda.device_count():
             return "cuda"
         return "cuda:%i"%(1 + (self.objective_id % (torch.cuda.device_count() - 1)))
+    def iter_count(self):
+        return self.ep_count
 
     def step(self, action):
         r = 0
         for i, act in enumerate(action):
             for _ in range(self.cfg['action_repeat']):
-                Task.ep_count += int(1 == self.objective_id)
+                self.ep_count += int(1 == self.objective_id)
                 act = np.clip(act, self.action_low, self.action_high)
                 a, state, reward, done, good = self.step_ex(act)
                 r += reward
@@ -54,7 +45,6 @@ class Task(object, metaclass=abc.ABCMeta):
                     break
             if any(a != act): # user want to change this action ( wrt gradient for training )
                 action[i] = a
-            #self.prev_state = self.env.pose
             if done:
                 break
         return np.array(action), state, r, done, good
@@ -105,6 +95,12 @@ class Task(object, metaclass=abc.ABCMeta):
         action[a] = 1.
         return action, a
 
+    def seed(self):
+        return self._seed
+
+    def update_goal(self, rewards, states, n_states, updates):
+        return rewards, states, n_states
+
     def her_state(self, ind = 0):
         return []
 
@@ -118,14 +114,8 @@ class Task(object, metaclass=abc.ABCMeta):
         self._seed = seed
         return [self.env_reset(seed)]
 
-    def seed(self):
-        return self._seed
-
     def env_reset(self, seed):
         return self.env.reset(self.bot_id, self.objective_id, seed)
-
-    def update_goal(self, rewards, states, n_states, updates):
-        return rewards, states, n_states
 
     @abc.abstractmethod
     def goal_met(self, state, n_steps):
