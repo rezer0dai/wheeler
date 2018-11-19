@@ -73,8 +73,7 @@ class Simulation:
             state = self.task.reset(seed)[0]
             next_state = state
 
-# TODO : initializing features should be responsibility of bot.encoder ...
-            f_pi = np.zeros(shape=(1, 1, self.cfg['history_features']))
+            f_pi = np.zeros(shape=(1, self.cfg['history_features']))
             history = deque(maxlen=self.cfg['history_count'])
             for s in [np.zeros(len(state))] * self.cfg['history_count']:
                 history.append(np.vstack(s))

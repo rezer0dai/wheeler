@@ -38,7 +38,7 @@ def agent_launch(bot_id, cfg, task_factory, encoder, Actor, Critic, stop_q, call
             break
 
     print("AGENT OVER")
-    for seed, sim in zip(mcsts, sims):
+    for seed, sim in zip(mcts, sims):
         seed.put(None)
         sim.join()
 

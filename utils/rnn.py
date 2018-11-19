@@ -1,13 +1,12 @@
 from utils.encoders import IEncoder
 
 import numpy as np
+from collections import deque
 
 import torch
 import torch.nn as nn
 
-# rethink multiple layered RNN; but dont increase much of complexity
-# should be done easily, see GRU vs LSTM cheat on n_features ( // 2 for LSTM )
-# so coupling hidden states after forward, and decouping it before passing to rnn
+# lots of code duplexity .. generalize it, also add vanila RNN
 
 class GRUEncoder(IEncoder):
     def __init__(self, cfg, state_size):
@@ -20,44 +19,68 @@ class GRUEncoder(IEncoder):
            - unless in actor/critic network itself
         """
         super().__init__({ 'history_count' : 1, 'history_features' : cfg['history_features'] })
+
+        self.n_layers = cfg['rnn_n_layers']
+        assert 0 == cfg['history_features'] % self.n_layers, "history_features must be fraction of rnn_n_layers!"
+
         self.her_state = cfg['her_state_size']
-        self.n_features = cfg['history_features']
+        self.n_features = cfg['history_features'] // self.n_layers
         self.history_count = cfg['history_count']
         self.state_size = state_size // self.history_count
+
+        self.out_count = self.history_count if cfg['full_rnn_out'] else 1
 
         self.rnn = nn.GRU(
                 self.state_size, self.n_features,
                 batch_first=True,
                 bidirectional=False,
-#                dropout=.2,
-                num_layers=1)
+                dropout=.2,
+                num_layers=self.n_layers,
+                bias=False)
 
     def has_features(self):
         return True
 
     def out_size(self):
-        return self.n_features
+        return self.n_features * self.out_count
 
     def forward(self, states, history):
         x = states[:, self.her_state:]
         x = x.view(x.size(0), self.history_count, -1)
 
-        history = history.view(1, states.size(0), -1)
+        history = history.view(self.n_layers, states.size(0), -1)
         out, hidden = self.rnn(x, history)
-        features = out[:, 0, :].view(1, 1, -1)
 
-        return hidden.view(states.size(0), -1), features
+        if self.out_count < self.history_count:
+            return out[:,-1,:].view(states.size(0), -1), hidden.reshape(1, -1)
+        return out.contiguous().view(states.size(0), -1), hidden.reshape(1, -1)
 
     def extract_features(self, states):
         states = states[:, # we want to get context from before our state
                 self.her_state:self.her_state+self.state_size:]
 
-        hidden = torch.zeros(1, 1, self.n_features)
+        history = deque(maxlen=self.history_count)
+        for s in [torch.zeros(len(states[0]))] * self.history_count:
+            history.append(s)
 
-        out, _ = self.rnn(states.unsqueeze(0), hidden)
-        features = [h.reshape(1, 1, -1).detach().cpu().numpy() for h in out.squeeze(0)]
-        ret = [ hidden.numpy() ] + features[:-1]
-        return torch.tensor(features).view(states.size(0), -1), ret
+        outs = []
+        features = []
+        hidden = torch.zeros(self.n_layers, 1, self.n_features)
+        for s in states:
+            features.append(hidden.detach().cpu().numpy().reshape(1, -1))
+
+            history.append(s)
+            state = torch.stack([s for s in history]).squeeze(1)
+            state = state.view(1, self.history_count, -1)
+
+            out, hidden = self.rnn(state, hidden)
+
+            if self.out_count < self.history_count:
+                outs.append(out[:,-1:])
+            else:
+                outs.append(out)
+
+        return torch.stack(outs).view(states.size(0), -1), features
 
 class LSTMEncoder(IEncoder):
     def __init__(self, cfg, state_size):
@@ -70,47 +93,66 @@ class LSTMEncoder(IEncoder):
            - unless in actor/critic network itself
         """
         super().__init__({ 'history_count' : 1, 'history_features' : cfg['history_features'] })
+
+        self.n_layers = cfg['rnn_n_layers']
+        assert 0 == cfg['history_features'] % self.n_layers, "history_features must be fraction of rnn_n_layers!"
+
         self.her_state = cfg['her_state_size']
-        self.n_features = cfg['history_features'] // 2
+        self.n_features = cfg['history_features'] // (2 * self.n_layers)
         self.history_count = cfg['history_count']
         self.state_size = state_size // self.history_count
 
-        self.rnn = nn.LSTMCell(
-                self.state_size, self.n_features)
+        self.out_count = self.history_count if cfg['full_rnn_out'] else 1
+
+        self.rnn = nn.LSTM(
+                self.state_size, self.n_features,
+                batch_first=True,
+                bidirectional=False,
+                dropout=.2,
+                num_layers=self.n_layers,
+                bias=False)
 
     def has_features(self):
         return True
 
     def out_size(self):
-        return self.n_features
+        return self.n_features * self.out_count
 
-    def forward(self, states, hidden):
+    def forward(self, states, history):
         x = states[:, self.her_state:]
         x = x.view(x.size(0), self.history_count, -1)
 
-        out, feature = self.rnn(x.transpose(0, 1)[0, :], hidden.view(2, states.size(0), -1))
-        features = torch.cat([out, feature], 1).view(1, 1, -1)
-        for s in x.transpose(0, 1)[1:, :]:
-            out, feature = self.rnn(s, (out, feature))
+        history = history.view(2, self.n_layers, states.size(0), -1)
+        out, hidden = self.rnn(x, history)
 
-        return out.view(states.size(0), -1), features
+        if self.out_count < self.history_count:
+            return out[:,-1,:].view(states.size(0), -1), torch.cat(hidden).reshape(1, -1)
+        return out.contiguous().view(states.size(0), -1), torch.cat(hidden).reshape(1, -1)
 
     def extract_features(self, states):
         states = states[:, # we want to get context from before our state
                 self.her_state:self.her_state+self.state_size:]
 
-        hidden = torch.zeros(2, 1, self.n_features)
-        feature = hidden.view(1, 1, -1)
-        features = [feature.detach().cpu().numpy()]
+        history = deque(maxlen=self.history_count)
+        for s in [torch.zeros(len(states[0]))] * self.history_count:
+            history.append(s)
 
         outs = []
-        for x in states:
-            x = x.view(1, -1)
-            out, feature = self.rnn(x, hidden)
-            hidden = (out, feature)
-            feature = torch.cat(hidden, 1).view(1, 1, -1)
+        features = []
+        hidden = [torch.zeros(self.n_layers, 1, self.n_features), torch.zeros(self.n_layers, 1, self.n_features)]
 
-            outs.append(out.reshape(-1).detach().cpu().numpy())
-            features.append(feature.detach().cpu().numpy())
+        for s in states:
+            features.append(torch.cat(hidden).detach().cpu().numpy().reshape(1, -1))
 
-        return torch.tensor(outs).view(len(states), -1), features[:-1]
+            history.append(s)
+            state = torch.stack([s for s in history]).squeeze(1)
+            state = state.view(1, self.history_count, -1)
+
+            out, hidden = self.rnn(state, hidden)
+
+            if self.out_count < self.history_count:
+                outs.append(out[:,-1:])
+            else:
+                outs.append(out)
+
+        return torch.stack(outs).view(states.size(0), -1), features

@@ -28,7 +28,7 @@ class Bot(SoftUpdateNetwork):
         self.attention = None if not self.cfg['attention_enabled'] else SimulationAttention(state_size, action_size, cfg)
 
         # set optimizers, expriment also with RMSprop, SGD w/ momentum
-        self.c_opt = optim.Adam(self.ac_explorer.critic_parameters(), lr=self.cfg['lr_actor'])
+        self.c_opt = optim.Adam(self.ac_explorer.critic_parameters(), lr=self.cfg['lr_critic'])
 
         self.a_opt = optim.Adam(
                 self.ac_explorer.actor_parameters() if not self.cfg['attention_enabled'] else np.concatenate([
@@ -73,11 +73,11 @@ class Bot(SoftUpdateNetwork):
 
             pgd_loss = -(grads.mean() if self.cfg['pg_mean'] else grads.sum())
 
-#            print(">>train", pgd_loss, len(advantages))
+            print(">>train", pgd_loss, len(advantages))
 
             #proceed to learning
             self.a_opt.zero_grad()
-            nn.utils.clip_grad_norm_(self.ac_explorer.actor_parameters(), 1)
+#            nn.utils.clip_grad_norm_(self.ac_explorer.actor_parameters(), 1)
 
             pgd_loss.backward()#retain_graph=True)
 
@@ -94,7 +94,7 @@ class Bot(SoftUpdateNetwork):
 #            loss = F.smooth_l1_loss(
             loss = F.mse_loss(
                     self.ac_explorer.value(ind, states, history, actions), qa_target)
-            nn.utils.clip_grad_norm_(self.ac_explorer.critic_parameters(), 1)
+            nn.utils.clip_grad_norm_(self.ac_explorer.critic[ind].parameters(), 1)
             loss.backward()
 
         self.c_opt.step(local_optim)

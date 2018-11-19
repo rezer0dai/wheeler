@@ -76,11 +76,10 @@ class RBFEncoder(IEncoder):
 class BatchNormalizer2D(IEncoder):
     def __init__(self, cfg, state_size):
         super().__init__(cfg)
-        self.osize = state_size
         self.size = cfg['her_state_size'] + state_size * cfg['history_count']
         self.bn = nn.BatchNorm1d(self.size)
     def out_size(self):
-        return self.osize
+        return self.size
     def forward(self, states, history):
         if states.size(0) > 1:
             return self.bn(states), history
@@ -95,7 +94,7 @@ class BatchNormalizer3D(IEncoder):
         self.bn = nn.BatchNorm1d(state_size)
         self.size = state_size
     def out_size(self):
-        return self.size
+        return self.size * self.n_history
     def forward(self, states, history):
         full_shape = states.shape
         states = states.reshape(states.size(0), self.size, -1)

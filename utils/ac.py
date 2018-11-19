@@ -34,12 +34,12 @@ class ActorCritic(nn.Module):
 
     def actor_parameters(self):
         return np.concatenate([
-            list(self.norm.parameters()),
+#            list(self.norm.parameters()),
             np.concatenate([list(actor.parameters()) for actor in self.actor])])
 
     def critic_parameters(self):
         return np.concatenate([
-#            list(self.norm.parameters()),
+            list(self.norm.parameters()),
             np.concatenate([list(critic.parameters()) for critic in self.critic])])
 
     def action(self, ind, states, history_context):

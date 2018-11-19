@@ -185,7 +185,6 @@ class Critic:
             return None
 
         states, features, actions, probs, _, n_states, n_features, n_rewards, _ = self.full_episode.T
-#        states, n_states = np.vstack(states), np.vstack(n_states)
         return np.vstack(zip(states, features, actions, probs, n_states, n_features, n_rewards))
 
     def _select(self):
@@ -232,7 +231,7 @@ class Critic:
                 bool(random.randint(0, self.cfg['her_max_ratio'])), # update or not
                 ) for e in episode]))
 
-        n = policy.td_lambda(rewards, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
+        n = policy.td_lambda(r, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
                 r,
                 self.bot.qa_future(self.objective_id, states, np.asarray(f), a),
                 self.discount, self.cfg['gae_tau'])

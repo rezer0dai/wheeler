@@ -61,8 +61,3 @@ class Critic(nn.Module):
         x = F.relu(self.fc2(x))
         x = self.fc3(x)
         return self.wrap_value(x)
-
-    def sample_noise(self):
-        return
-    def remove_noise(self):
-        return
