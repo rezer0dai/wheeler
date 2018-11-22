@@ -67,9 +67,9 @@ class Task(object, metaclass=abc.ABCMeta):
             for i, s in enumerate(state):
                 history[i].append(np.vstack(s))
                 state = np.vstack(history[i]).squeeze(1)
-                state = self.transform_state(state, i)
+                goal = self.goal(i)
 
-                a, h = bot.act(state, hiddens[i])
+                a, h = bot.act(goal, state, hiddens[i])
                 hiddens[i] = h[0]
 
                 a = np.clip(a[0], self.action_low, self.action_high)
@@ -98,14 +98,11 @@ class Task(object, metaclass=abc.ABCMeta):
     def seed(self):
         return self._seed
 
-    def update_goal(self, rewards, states, n_states, updates):
-        return rewards, states, n_states
+    def update_goal(self, rewards, goals, states, n_goals, n_states, updates):
+        return zip(rewards, goals, states, n_goals, n_states)
 
-    def her_state(self, ind = 0):
-        return []
-
-    def transform_state(self, state, ind = 0):
-        return np.hstack([self.her_state(ind), state])
+    def goal(self, ind = 0):
+        return np.zeros(0)
 
     def reset(self, seed = None, test = False):
         if None == seed:

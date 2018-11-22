@@ -56,10 +56,18 @@ class StackedEncoder(IEncoder):
         return self.encoder_b(states, history)
 
     def extract_features(self, states):
-        states, features = self.encoder_a.extract_features(states)
-        if self.encoder_b.has_features(): # states already encoded, now extract feats!
-            return self.encoder_b.extract_features(states)
-        return states, features # no RNN present defaults feats are OK ..
+        states, features_a = self.encoder_a.extract_features(states)
+        states, features_b = self.encoder_b.extract_features(states)
+        return states, features_b if self.encoder_b.has_features() else features_a
+
+class IdentityEncoder(IEncoder):
+    def __init__(self, cfg, size):
+        super().__init__(cfg)
+        self.size = size
+    def out_size(self):
+        return self.size
+    def forward(self, states, history):
+        return states, history
 
 class RBFEncoder(IEncoder):
     def __init__(self, cfg, env, gamas, components, sampler = None):
@@ -76,7 +84,7 @@ class RBFEncoder(IEncoder):
 class BatchNormalizer2D(IEncoder):
     def __init__(self, cfg, state_size):
         super().__init__(cfg)
-        self.size = cfg['her_state_size'] + state_size * cfg['history_count']
+        self.size = state_size * cfg['history_count']
         self.bn = nn.BatchNorm1d(self.size)
     def out_size(self):
         return self.size
@@ -89,12 +97,11 @@ class BatchNormalizer2D(IEncoder):
         return out, history
 class BatchNormalizer3D(IEncoder):
     def __init__(self, cfg, state_size):
-        assert 0 == cfg['her_state_size'], "batchnorm on 3D input while HER active is incompatible!"
         super().__init__(cfg)
         self.bn = nn.BatchNorm1d(state_size)
         self.size = state_size
     def out_size(self):
-        return self.size * self.n_history
+        return self.size
     def forward(self, states, history):
         full_shape = states.shape
         states = states.reshape(states.size(0), self.size, -1)
@@ -116,14 +123,8 @@ class GlobalNormalizerWGrads(IEncoder):
         states = states.reshape(-1, self.bn.size) # we stacking history states ( frames ) as well to batchnorm!
         self.bn.update(states)
         return self.bn.normalize(states).reshape(full_shape), history
-class GlobalNormalizer(IEncoder):
+class GlobalNormalizer(GlobalNormalizerWGrads):
     def __init__(self, cfg, state_size):
-        super().__init__(cfg)
-        self.bn = Normalizer(state_size)
-    def out_size(self):
-        return self.bn.size
-    def forward(self, states, history):
-        full_shape = states.shape
-        states = states.reshape(-1, self.bn.size) # we stacking history states ( frames ) as well to batchnorm!
-        self.bn.update(states)
-        return self.bn.normalize(states).detach().reshape(full_shape), history
+        super().__init__(cfg, state_size)
+        for p in self.bn.parameters():
+            p.requires_grad = False

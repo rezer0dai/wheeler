@@ -12,10 +12,13 @@ from utils.nes import NoisyNet
 class Actor(nn.Module):
     def __init__(self, state_size, action_size, wrap_action, cfg, hiddens = [400, 300]):
         super().__init__()
+        state_size = state_size + cfg['her_state_features']
         self.net = NoisyNet([state_size] + hiddens + [action_size])
         self.algo = DDPG(wrap_action) if cfg['ddpg'] else PPO(action_size)
 
-    def forward(self, state):
+    def forward(self, goal, state):
+        if goal.dim() == state.dim():
+            state = torch.cat([goal, state], -1)
         x = self.net(state)
         return self.algo(x)
 

@@ -2,7 +2,7 @@ import numpy as np
 import time, random
 
 import torch
-from torch.multiprocessing import Queue, SimpleQueue, Process, Lock
+from torch.multiprocessing import SimpleQueue, Process, Lock, Queue
 
 from utils.learning_rate import LinearAutoSchedule as LinearSchedule
 
@@ -16,11 +16,12 @@ from agent.simulation import simulation_launch
 from threading import Thread
 
 # multi process worker
-def agent_launch(bot_id, cfg, task_factory, encoder, Actor, Critic, stop_q, callback = None):
-    agent = Zer0Bot(bot_id, cfg, task_factory, encoder, Actor, Critic)
+def agent_launch(bot_id, cfg, task_factory, encoder, Actor, Critic, stop_q, callback = None, goal_encoder = None):
+    agent = Zer0Bot(bot_id, cfg, task_factory, encoder, Actor, Critic, goal_encoder)
 
     loss_gate, mcts, signal = zip(*[(
-        Queue(), SimpleQueue(), Queue()) for i in range(cfg['n_simulations'])])
+        Queue(), SimpleQueue(), SimpleQueue()
+        ) for i in range(cfg['n_simulations'])])
 
     sims = [ Thread(#Process(#
         target=simulation_launch,
@@ -34,21 +35,32 @@ def agent_launch(bot_id, cfg, task_factory, encoder, Actor, Critic, stop_q, call
         scores = agent.train(loss_gate, mcts, signal)
         if None == callback:
             continue
-        if callback(agent, scores):
-            break
+        scores = callback(agent, scores)
+        if scores is None:
+            continue
+        stop_q.put(scores)
 
     print("AGENT OVER")
     for seed, sim in zip(mcts, sims):
         seed.put(None)
         sim.join()
 
+    for qs in [loss_gate, mcts, signal]:
+        for q in qs:
+            while not q.empty():
+                q.get()
+    # seems queues has still something to process .. check more python multiproc to avoid this timer ...
+    time.sleep(3)#10
+
+
 class Zer0Bot:
-    def __init__(self, bot_id, cfg, task_factory, encoder, Actor, Critic):
+    def __init__(self, bot_id, cfg, task_factory, encoder, Actor, Critic, goal_encoder):
         self.cfg = cfg
         self.bot = Bot(
                 cfg,
                 bot_id,
                 encoder,
+                goal_encoder,
                 Actor,
                 Critic,
                 task_factory.state_size,
@@ -57,16 +69,20 @@ class Zer0Bot:
                 task_factory.wrap_value)
         self.bot.share_memory() # !! must be done from main process !!
 
+        self.iter = 0
+        self.freezed = 0
+
         self.counter = 1
         self.tau = LinearSchedule(cfg['tau_replay_counter'], cfg['tau_base'], cfg['tau_final'])
 
         self.lock = Lock()
         self.bot = BotProxy(self.lock, cfg, self.bot, cfg['device'])
 
-    def act(self, state, history): # TODO rename to exploit
-        return self.bot.exploit(state, history)
+    def act(self, goal, state, history): # TODO rename to exploit
+        return self.bot.exploit(goal, state, history)
 
     def train(self, loss, mcts, signal):
+        self._encoder_freeze_schedule()
         #  seed = [random.randint(0, self.cfg['mcts_random_cap'])] * self.cfg['mcts_rounds']
         for c in mcts: # maybe we want to * n_episodes ...
             c.put([random.randint(0, self.cfg['mcts_random_cap'])] * self.cfg['mcts_rounds'])
@@ -114,8 +130,8 @@ class Zer0Bot:
         s, w, a = self._qa_function(i, *s_f_a_p_td)
         return s, w, a
 
-    def _qa_function(self, objective_id, states, history, actions, probs, td_targets):
-        qa, dist = self.bot.q_explore(objective_id, states, history)
+    def _qa_function(self, objective_id, goals, states, history, actions, probs, td_targets):
+        qa, dist = self.bot.q_explore(objective_id, goals, states, history)
 
         loss = self._qa_error(qa, td_targets)
         if self.cfg['normalize_advantages']:
@@ -146,3 +162,17 @@ class Zer0Bot:
         for i, e in enumerate(td_error):
             td_error[i] = e if abs(e) > 1e-5 else qa[i]
         return td_error
+
+    def _encoder_freeze_schedule(self):
+        if not self.cfg['freeze_delta']:
+            return
+        self.iter += (0 == self.freezed)
+        if self.iter % self.cfg['freeze_delta']:
+            return
+        if not self.freezed:
+            self.bot.freeze_encoders()
+        self.freezed += 1
+        if self.freezed <= self.cfg['freeze_count']:
+            return
+        self.freezed = 0
+        self.bot.unfreeze_encoders()

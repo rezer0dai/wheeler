@@ -10,14 +10,14 @@ from utils.attention import SimulationAttention
 from utils.ac import ActorCritic
 
 class Bot(SoftUpdateNetwork):
-    def __init__(self, cfg, actor_id, encoder, Actor, Critic, state_size, action_size, wrap_action, wrap_value):
+    def __init__(self, cfg, actor_id, encoder, goal_encoder, Actor, Critic, state_size, action_size, wrap_action, wrap_value):
         self.cfg = cfg
         self.actor_id = actor_id
 
         self.state_size = state_size
 
         self.ac_explorer = ActorCritic(
-                encoder,
+                encoder, goal_encoder,
                 [Actor(
                     encoder.total_size(), action_size, wrap_action, cfg
                     ) for i in range(1 if not cfg['detached_actor'] else cfg['n_simulations'])],
@@ -36,7 +36,7 @@ class Bot(SoftUpdateNetwork):
                 lr=self.cfg['lr_actor'])
 
         self.ac_target = ActorCritic(
-                encoder,
+                encoder, goal_encoder,
                 [Actor(
                     encoder.total_size(), action_size, wrap_action, cfg
                     )],
@@ -46,24 +46,24 @@ class Bot(SoftUpdateNetwork):
         # sync
         self.sync_explorers(update_critics=True)
 
-    def exploit(self, states, history):
-        return self.ac_target.action(0, states, history)
+    def exploit(self, goals, states, history):
+        return self.ac_target.action(0, goals, states, history)
 
-    def explore(self, ind, states, history):
-        return self.ac_explorer.action(ind, states, history)
+    def explore(self, ind, goals, states, history):
+        return self.ac_explorer.action(ind, goals, states, history)
 
-    def qa_future(self, ind, states, history, actions):
-        return self.ac_target.value(ind, states, history, actions)
+    def qa_future(self, ind, goals, states, history, actions):
+        return self.ac_target.value(ind, goals, states, history, actions)
 
-    def qa_present(self, ind, states, history, actions):
-        return self.ac_explorer.value(ind, states, history, actions)
+    def qa_present(self, ind, goals, states, history, actions):
+        return self.ac_explorer.value(ind, goals, states, history, actions)
 
-    def q_future(self, ind, states, history):
-        q, _ = self.ac_target(0, ind, states, history)
+    def q_future(self, ind, goals, states, history):
+        q, _ = self.ac_target(0, ind, goals, states, history)
         return q
 
-    def q_explore(self, a_ind, c_ind, states, history):
-        return self.ac_explorer(a_ind, c_ind, states, history)
+    def q_explore(self, a_ind, c_ind, goals, states, history):
+        return self.ac_explorer(a_ind, c_ind, goals, states, history)
 
     def learn_actor(self, states, advantages, actions, tau):
         def local_optim():
@@ -73,7 +73,7 @@ class Bot(SoftUpdateNetwork):
 
             pgd_loss = -(grads.mean() if self.cfg['pg_mean'] else grads.sum())
 
-            print(">>train", pgd_loss, len(advantages))
+            #  print(">>train", pgd_loss, len(advantages))
 
             #proceed to learning
             self.a_opt.zero_grad()
@@ -88,12 +88,12 @@ class Bot(SoftUpdateNetwork):
         self.soft_mean_update(tau)
         self.save_models(self.cfg, self.actor_id, "actor")
 
-    def learn_critic(self, ind, states, history, actions, qa_target, tau):
+    def learn_critic(self, ind, goals, states, history, actions, qa_target, tau):
         def local_optim():
             self.c_opt.zero_grad()
 #            loss = F.smooth_l1_loss(
             loss = F.mse_loss(
-                    self.ac_explorer.value(ind, states, history, actions), qa_target)
+                    self.ac_explorer.value(ind, goals, states, history, actions), qa_target)
             nn.utils.clip_grad_norm_(self.ac_explorer.critic[ind].parameters(), 1)
             loss.backward()
 
@@ -106,8 +106,16 @@ class Bot(SoftUpdateNetwork):
         self.load_models(self.cfg, 0, "actor", blacklist) # help apha actor to explore ~ multi agent coop !!
         self.sync_explorers() # load only alpha actor, keep critics our own
 
-    def reevaluate(self, ind, states, actions):
+    def reevaluate(self, ind, goals, states, actions):
         s, f = self.ac_explorer.extract_features(states)
-        p = self.ac_explorer.actor[ind](s).log_prob(
+        g = self.ac_explorer.process_goals(goals)
+        p = self.ac_explorer.actor[ind](g, s).log_prob(
                 torch.tensor(actions)).detach().cpu().numpy()
         return f, p
+
+    def freeze_encoders(self):
+        self.ac_explorer.freeze_encoders()
+        self.ac_target.freeze_encoders()
+    def unfreeze_encoders(self):
+        self.ac_explorer.unfreeze_encoders()
+        self.ac_target.unfreeze_encoders()

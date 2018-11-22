@@ -1,8 +1,19 @@
-from torch.multiprocessing import Queue, Process#, SimpleQueue
-import threading
+import threading, abc
+from torch.multiprocessing import SimpleQueue, Process, Queue
+
+class ITaskWorker:
+    @abc.abstractmethod
+    def register(self, bot_id, objective_id, gl):
+        pass
+    @abc.abstractmethod
+    def reset(self, bot_id, objective_id, seed):
+        pass
+    @abc.abstractmethod
+    def step(self, bot_id, objective_id, action):
+        pass
 
 # decide if we want to push it to separate process or in main proc as thread
-class RemoteTaskComm(Process):#threading.Thread):#
+class RemoteTaskServer(Process):#threading.Thread):#
     def __init__(self, factory_mgr, factory_env, pipe_cmd, pipe_data):
         super().__init__()
         self.pipe_cmd = pipe_cmd
@@ -12,7 +23,7 @@ class RemoteTaskComm(Process):#threading.Thread):#
         self.factory_mgr = factory_mgr
         self.factory_env = factory_env
 
-        self.cmd = { 
+        self.cmd = {
                 "reset" : self._reset,
                 "step" : self._step, }
 
@@ -28,9 +39,14 @@ class RemoteTaskComm(Process):#threading.Thread):#
                 break
 
             ind, key, info = data
+
+            if self.workers[ind] is not None:
+                self.workers[ind].join()
+
             self.workers[ind] = threading.Thread(
-                    target=self.async_processing, 
+                    target=self.async_processing,
                     args=(ind, cmd, key, info))
+            self.workers[ind].daemon = True
 
             self.workers[ind].start()
 
@@ -49,13 +65,13 @@ class RemoteTaskComm(Process):#threading.Thread):#
 # > haha what a design conditions .. but its ok for this mini project
 class RemoteTaskManager:
     def __init__(self, factory_env, factory_mgr, n_tasks):
-        self.pipe_cmd = Queue()
-        self.pipe_data = [Queue() for _ in range(n_tasks + 1)]
+        self.pipe_cmd = Queue() # we want to queue more data in a row
+        self.pipe_data = [SimpleQueue() for _ in range(n_tasks + 1)]
 
         self.factory_mgr = factory_mgr
 
 # create thread ( in main process!! ) which will handle requests!
-        self.com = RemoteTaskComm(factory_mgr, factory_env, self.pipe_cmd, self.pipe_data)
+        self.com = RemoteTaskServer(factory_mgr, factory_env, self.pipe_cmd, self.pipe_data)
 
         self.dtb = {}
         self.lock = threading.RLock()

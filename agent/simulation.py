@@ -4,26 +4,33 @@ import numpy as np
 from collections import deque
 
 import torch
-from torch.multiprocessing import Queue, SimpleQueue, Process
+from torch.multiprocessing import SimpleQueue, Queue, Process
 
 from agent.critic import critic_launch
 
 from threading import Thread
 
 def simulation_launch(cfg, bot, bot_id, objective_id, task_factory, loss, mcts, signal):
-    share, stats = SimpleQueue(), Queue()
+    ping, sync, share = SimpleQueue(), SimpleQueue(), Queue()
+    stats = Queue() if not bot_id else None
 
     sim = Simulation(cfg, bot, bot_id, objective_id, task_factory)
 
     critic = Thread(#Process(#
             target=critic_launch,
-            args=(cfg, bot, objective_id, task_factory, sim.task.update_goal, loss, share, stats,))
+            args=(cfg, bot, objective_id, task_factory, sim.task.update_goal, ping, sync, loss, share, stats,))
     critic.start()
 
-    sim.explore(loss, mcts, signal, share, stats)
+    sim.explore(ping, sync, loss, mcts, signal, share, stats)
     print("SIMULATION OVER")
-    share.put(None)
     critic.join()
+
+    # TODO : ping scoping refactor, following slush refactor, dtor refactor ( sim + crit )
+    for q in [ping, sync, share, stats]:
+        while q is not None and not q.empty():
+            q.get()
+    # seems queues has still something to process .. check more python multiproc to avoid this timer ...
+    time.sleep(3)#10
 
 class Simulation:
     def __init__(self, cfg, bot, bot_id, objective_id, task_factory):
@@ -31,6 +38,8 @@ class Simulation:
         self.bot = bot
         self.bot_id = bot_id
         self.objective_id = objective_id
+
+        self.stop = False
 
         self.task_factory = task_factory
         self.task = task_factory.new(cfg, bot_id, objective_id)
@@ -43,24 +52,28 @@ class Simulation:
         self.n_step = self.cfg['n_step']
         self.max_n_episode = self.cfg['max_n_episode']
 
-    def setup(self):
-        share_gate = Queue()
-        return share_gate
-
-    def explore(self, loss_gate, mcts, signal, share_gate, stats):
+    def explore(self, ping, sync, loss_gate, mcts, signal, share_gate, stats):
         while True:
             seeds = mcts.get()
             if None == seeds:
                 break
-            scores = self._run(seeds, share_gate, loss_gate, stats)
+            scores = self._run(seeds, ping, share_gate, loss_gate, stats)
             signal.put(scores) # sync
 
-    def _run(self, seeds, share_gate, loss_gate, stats):
+        self._dtor(sync, share_gate)
+
+    def _dtor(self, sync, share_gate):
+        self.stop = True
+        share_gate.put(None)
+        sync.get()
+
+    def _run(self, seeds, ping, share_gate, loss_gate, stats):
         self.count += 1
         exp_delta = self.delta_step + self.n_step
 
         scores = []
         for e, seed in enumerate(seeds):
+            goals = []
             states = []
             actions = []
             probs = []
@@ -73,7 +86,7 @@ class Simulation:
             state = self.task.reset(seed)[0]
             next_state = state
 
-            f_pi = np.zeros(shape=(1, self.cfg['history_features']))
+            f_pi = np.zeros(shape=(1, 1, self.cfg['history_features']))
             history = deque(maxlen=self.cfg['history_count'])
             for s in [np.zeros(len(state))] * self.cfg['history_count']:
                 history.append(np.vstack(s))
@@ -84,22 +97,15 @@ class Simulation:
             done = False
             frozen = False
             while True:
-                for _ in range(10 * self.cfg['postpone_exploring_while_learning']):
-                    if frozen:
-                        break
-                    if loss_gate.empty():
-                        break
-                    time.sleep(.1)
-                frozen = not loss_gate.empty()
+                frozen = self._sync(frozen, ping, loss_gate)
 
                 state = next_state
                 history.append(np.vstack(state))
-                state = np.vstack(history).squeeze(1)
-# problem with HER and RNN ( history frames ) is so they must not contains HER-GOAL, and so
-# now we need to append it ~ history stacked, now GOAL!
-                state = self.task.transform_state(state)
 
-                dist, f_pi = self.bot.explore(self.objective_id, state, features[-1])
+                state = np.vstack(history).squeeze(1)
+                goal = self.task.goal(self.objective_id)
+
+                dist, f_pi = self.bot.explore(self.objective_id, goal, state, features[-1])
 
                 a_pi = dist.sample().detach().cpu().numpy()
                 f_pi = f_pi.detach().cpu().numpy()
@@ -117,17 +123,20 @@ class Simulation:
                 actions.append(action)
                 probs.append(prob)
                 rewards.append(reward)
+                goals.append(goal)
                 states.append(state)
                 goods.append(good)
 
                 temp = self._share_experience(e, len(states), last)
                 if temp != last:
                     self._do_fast_train(share_gate,
+                            goals[-exp_delta:-self.n_step],
                             states[-exp_delta:-self.n_step],
                             features[-exp_delta:-self.n_step],
                             actions[-exp_delta:-self.n_step],
                             probs[-exp_delta:-self.n_step],
                             rewards[-exp_delta:-self.n_step],
+                            goals[-self.delta_step:],
                             states[-self.delta_step:],
                             features[-self.delta_step:],
                             goods[-exp_delta:-self.n_step],
@@ -141,13 +150,14 @@ class Simulation:
                 self._print_stats(e, rewards, a_pi, stats)
 
             self._do_last_train(share_gate,
+                    goals[last:],
                     states[last:],
                     features[last:],
                     actions[last:],
                     probs[last:],
                     rewards[last:],
                     goods[last:],
-                    state, a_pi)
+                    state, goal, a_pi)
 
             self.best_max_step = max(self.best_max_step, np.sign(self.cfg['max_n_step']) * len(rewards))
 
@@ -156,6 +166,9 @@ class Simulation:
 # we must ensure each round at least one training happaned!
             if len(rewards) < self.n_step * 2:
                 self._run([seed + 1], share_gate, loss_gate, stats)
+
+        while self._sync(False, ping, loss_gate):
+            pass # flush learning queue per train-round!!
 
         return scores
 
@@ -182,28 +195,40 @@ class Simulation:
         return total - self.n_step
 
     def _do_fast_train(self, shared_gate,
-            states, features, actions, probs, rewards,
-            n_states, n_features,
+            goals, states, features, actions, probs, rewards,
+            n_goals, n_states, n_features,
             goods, action):
 
         self._forward(shared_gate,
-                states, features, actions, probs, rewards,
-                n_states, n_features, goods,
+                goals, states, features, actions, probs, rewards,
+                n_goals, n_states, n_features, goods,
                 action, False)
 
     def _do_last_train(self, shared_gate,
-            states, features, actions, probs, rewards,
-            goods, final_state, action):
+            goals, states, features, actions, probs, rewards,
+            goods, final_state, final_goal, action):
 
+        goals += [final_goal] * self.n_step
         states += [final_state] * self.n_step
         features += [features[-1]] * (self.n_step - 1)
 
         self._forward(shared_gate,
-            states[:-self.n_step], features[:-self.n_step], actions, probs, rewards,
-            states[self.n_step:], features[self.n_step:], goods,
+            goals[:-self.n_step], states[:-self.n_step], features[:-self.n_step], actions, probs, rewards,
+            goals[self.n_step:], states[self.n_step:], features[self.n_step:], goods,
             action, True)
 
-    def _forward(self, shared_gate, states, features, actions, probs, rewards, n_states, n_features, goods, action, full):
+    def _forward(self, shared_gate, goals, states, features, actions, probs, rewards, n_goals, n_states, n_features, goods, action, full):
+        if self.stop:
+            return
         shared_gate.put([full, action, (
-            states, features, actions, probs, rewards, n_states, n_features, goods,
+            goals, states, features, actions, probs, rewards, n_goals, n_states, n_features, goods,
             )])
+
+    def _sync(self, frozen, ping, loss_gate):
+        for i in range(10 * self.cfg['postpone_exploring_while_learning']):
+            if frozen and i > 4:
+                break # dont wait so long everytime if it is overfilled ~ buggy prone then ...
+            if ping.empty() and loss_gate.empty():
+                break
+            time.sleep(.1)
+        return not ping.empty() or not loss_gate.empty()

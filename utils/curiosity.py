@@ -14,7 +14,7 @@ class CuriosityNN(nn.Module):
         torch.set_default_tensor_type(cfg['tensor'])
         self.cfg = cfg
 
-        self.state_size = cfg['her_state_size'] + state_size * cfg['history_count']
+        self.state_size = state_size * cfg['history_count']
         self.action_size = action_size
         self.wrap_action = wrap_action
 

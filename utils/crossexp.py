@@ -47,25 +47,25 @@ class CrossExpBuffer(ReplayBuffer):
         super().__init__(cfg, objective_id)
         self.mgr = mgr
 
-    def _do_sample(self, full_episode, pivot, length, delta, critic, hashkey):
+    def _do_sample(self, full_episode, pivot, length, critic, hashkey, timestamp):
         # forwarding already sampled data
-        for i, data in super()._do_sample(full_episode, pivot, length, delta, critic, hashkey):
+        for i, data in super()._do_sample(full_episode, pivot, length, critic, hashkey, timestamp):
             yield i, data
 
         # withdraw possibly cross-sampled data ( cross simulation / cross bot )
         cross_episode = self.mgr.sample()
 
 # registering hot data to observer ~ or we can add them when adding to buffers
-# .. but currently add data based on heatmap ( how often are used ) seems to me ok idea
+# .. but currently add data based on heatmap ( how often are used ) seems to be ok idea
         self.mgr.add(full_episode, hashkey)
 
         if None == cross_episode:
             return # nothin to be seen yet
 
         for _, data in super()._do_sample(
-                cross_episode, 
-                0, len(cross_episode), 
-                random.randint(0, self.cfg['n_critics']), critic, hashkey):
+                cross_episode,
+                0, len(cross_episode),
+                critic, hashkey, -1):
             yield -1, data # indicating we dont want to touch that data at update prios later on
 
     def update(self, prios):
@@ -82,5 +82,5 @@ def cross_exp_buffer(cfg):
         ceb = CrossExpBuffer(mgr, cfg, objective_id)
         return ceb
 
-    mgr.start() # separate process as we overhauling our main process with python threads 
+    mgr.start() # separate process as we overhauling our main process with python threads
     return cross_buff

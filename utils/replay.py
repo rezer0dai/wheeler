@@ -16,7 +16,11 @@ class ReplayBuffer:
                initial_p=cfg['replay_beta_base'],
                final_p=cfg['replay_beta_top'])
 
-        self.mem = Memory(cfg['replay_size'], cfg['batch_size'], cfg['replay_alpha'])
+        self.counter = 0
+        self.timetable = [0] * cfg['replay_size']
+        self.delta = cfg['freeze_count'] + cfg['freeze_delta']
+
+        self.mem = Memory(cfg['replay_size'], cfg['select_count'], cfg['replay_alpha'])
 
     def sample(self, batch_size, critic):
         self.inds, data = zip(*self._sample(batch_size, critic))
@@ -30,8 +34,11 @@ class ReplayBuffer:
         if not self._worth_experience(prios):
             return
 
+        self.counter = (self.counter + 1) % len(self.timetable)
+        # do first update when we do first freeze
+        self.timetable[self.counter] = self.counter - self.delta - self.cfg['freeze_count']
         for i, data in enumerate(batch):
-            self.mem.add([data, i, len(prios) - i - 1, hashkey], prios[i])
+            self.mem.add([data, i, len(prios) - i - 1, hashkey, self.counter], prios[i])
 
     def _worth_experience(self, prios):
         if not len(self):
@@ -55,10 +62,12 @@ class ReplayBuffer:
             if None == data:
                 continue
             batch, _, inds = data
-            data, local_forward, local_backward, hashkey = zip(*batch)
+            if None == batch:
+                continue
+            data, local_forward, local_backward, hashkey, timestamp = zip(*batch)
 
             uniq = set(map(lambda i_b: i_b[0] - i_b[1], zip(inds, local_forward)))
-            for i, b, f, k in zip(inds, local_backward, local_forward, hashkey):
+            for i, b, f, k, t in zip(inds, local_backward, local_forward, hashkey, timestamp):
 #                if count >= self.cfg['max_ep_draw_count']:
 #                    break
                 pivot = i - f
@@ -70,21 +79,26 @@ class ReplayBuffer:
 #                yield (i, self.mem.tree.data[i][0])
 #                continue
                 count += 1
-                yield zip(*self._do_sample_wrap(pivot, b + f, critic, k))
+                yield zip(*self._do_sample_wrap(pivot, b + f, critic, k, t))
 
-    def _do_sample_wrap(self, pivot, length, critic, hashkey):
-        return self._do_sample(self.mem.tree.data[pivot:pivot+length], pivot, length, critic, hashkey)
+    def _do_sample_wrap(self, pivot, length, critic, hashkey, timestamp):
+        return self._do_sample(self.mem.tree.data[pivot:pivot+length], pivot, length, critic, hashkey, timestamp)
 
-    def _do_sample(self, full_episode, pivot, length, critic, _):
+    def _do_sample(self, full_episode, pivot, length, critic, _, timestamp):
         available_range = range(length)
 
         top = min(len(available_range), self.cfg['max_ep_draw_count'])
         replay = random.sample(available_range, random.randint(1, top))
 
+        recalc = abs(self.timetable[timestamp] - self.counter) > self.delta * 2
+
         if not critic or not self.cfg['replay_reanalyze']:
             episode = map(lambda i: full_episode[i][0], replay)
         else:
-            episode = critic.reanalyze_experience(full_episode, replay)
+            episode = critic.reanalyze_experience(full_episode, replay, recalc)
+
+        if recalc:
+            self.timetable[timestamp] = self.counter
 
         for i, step in zip(replay, episode):
             yield pivot + i, step
