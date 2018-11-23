@@ -39,7 +39,7 @@
  
 *	From design perspective, this are some nice things you can be interested in to look at :
 	* **Task management** : https://github.com/rezer0dai/wheeler/blob/master/utils/taskmgr.py
-		* allowing { unity / openaigym } to work with uniformly, in parallel and multiple agents same time sampling
+		* allowing { unity / openaigym } to work with uniformly at scale, multiple agents sampling trough parallel environments
 	* **DDPG + PPO** ( + later on DQN and value function as well ) uniform implementation : https://github.com/rezer0dai/wheeler/blob/master/utils/policy.py
 		* allow uniformly exchange those algorithms via minimal changes to learning algorithm/framework
 		* same thing i plan to use when adding Q functions to framework
