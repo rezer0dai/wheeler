@@ -56,8 +56,8 @@ class ActorCritic(nn.Module):
 # however need to properly test trolol ...
     def critic_parameters(self):
         return np.concatenate([
-            list(filter(lambda p: p.requires_grad, self.norm.parameters())),
-            list(filter(lambda p: p.requires_grad, self.goal.parameters())) if self.goal is not None else [],
+            #  list(filter(lambda p: p.requires_grad, self.norm.parameters())),
+            #  list(filter(lambda p: p.requires_grad, self.goal.parameters())) if self.goal is not None else [],
             np.concatenate([list(critic.parameters()) for critic in self.critic])])
 
     def action(self, ind, goals, states, history_context):

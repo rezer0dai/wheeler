@@ -15,7 +15,8 @@ class Critic(nn.Module):
     def __init__(self, state_size, action_size, wrap_value, cfg, fcs1_units=400, fc2_units=300):
         super().__init__()
         self.wrap_value = wrap_value
-        state_size = state_size + cfg['her_state_features']
+
+        state_size += cfg['her_state_features']
         self.fcs1 = nn.Linear(state_size, fcs1_units)
         self.fca1 = nn.Linear(action_size, fc2_units)
         self.fc2 = nn.Linear(fcs1_units + fc2_units, fc2_units, bias = False)

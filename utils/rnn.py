@@ -42,7 +42,7 @@ class GRUEncoder(IEncoder):
         return True
 
     def out_size(self):
-        return self.n_features * self.out_count
+        return self.n_features * self.out_count + self.state_size * self.history_count
 
     def forward(self, states, history):
         x = states.view(states.size(0), self.history_count, -1)
@@ -51,8 +51,12 @@ class GRUEncoder(IEncoder):
         out, hidden = self.rnn(x, history)
 
         if self.out_count < self.history_count:
-            return out[:,-1,:].view(states.size(0), -1), hidden.reshape(states.size(0), 1, -1)
-        return out.contiguous().view(states.size(0), -1), hidden.reshape(states.size(0), 1, -1)
+            out = out[:,-1,:].view(states.size(0), -1)
+        else:
+            out = out.contiguous().view(states.size(0), -1)
+
+        features = hidden.reshape(states.size(0), 1, -1)
+        return torch.cat([states, out], 1), features
 
     def extract_features(self, states):
         outs = []
@@ -70,7 +74,8 @@ class GRUEncoder(IEncoder):
             else:
                 outs.append(out)
 
-        return torch.stack(outs).view(states.size(0), -1).detach(), features
+        out = torch.stack(outs).view(states.size(0), -1).detach()
+        return torch.cat([states, out], 1), features
 
 class LSTMEncoder(IEncoder):
     def __init__(self, cfg, state_size):
@@ -105,7 +110,7 @@ class LSTMEncoder(IEncoder):
         return True
 
     def out_size(self):
-        return self.n_features * self.out_count
+        return self.n_features * self.out_count + self.state_size * self.history_count
 
     def forward(self, states, history):
         x = states.view(states.size(0), self.history_count, -1)
@@ -114,8 +119,12 @@ class LSTMEncoder(IEncoder):
         out, hidden = self.rnn(x, history)
 
         if self.out_count < self.history_count:
-            return out[:,-1,:].view(states.size(0), -1), torch.cat(hidden).reshape(states.size(0), 1, -1)
-        return out.contiguous().view(states.size(0), -1), torch.cat(hidden).reshape(states.size(0), 1, -1)
+            out = out[:,-1,:].view(states.size(0), -1)
+        else:
+            out = out.contiguous().view(states.size(0), -1)
+
+        features = torch.cat(hidden).reshape(states.size(0), 1, -1)
+        return torch.cat([states, out], 1), features
 
     def extract_features(self, states):
         outs = []
@@ -134,7 +143,8 @@ class LSTMEncoder(IEncoder):
             else:
                 outs.append(out)
 
-        return torch.stack(outs).view(states.size(0).detach(), -1), features
+        out = torch.stack(outs).view(states.size(0), -1).detach()
+        return torch.cat([states, out], 1), features
 
 class GruLayer(nn.Module):
     def __init__(self, in_count, out_count, bias):
@@ -180,7 +190,7 @@ class FasterGRUEncoder(IEncoder):
         return True
 
     def out_size(self):
-        return self.n_features
+        return self.n_features + self.state_size * self.history_count
 
     def forward(self, states, history):
         memory = self._forward_impl(states, history)
@@ -191,7 +201,7 @@ class FasterGRUEncoder(IEncoder):
 
         # all layers, all states, first hidden state, all features
         hidden = memory[:, :, 0, :].transpose(0, 1).reshape(states.size(0), 1, -1)
-        return out, hidden
+        return torch.cat([states, out], 1), hidden
 
     def extract_features(self, states):
         hidden = torch.zeros(self.n_layers, 1, self.n_features)
@@ -203,7 +213,7 @@ class FasterGRUEncoder(IEncoder):
 
         out = memory[-1, 0, self.history_count-1:, :] # last layer, only one state, whole history sequence of features
         hidden = memory[:, 0, self.history_count-1:, :, ].transpose(0, 1).reshape(states.size(0), 1, 1, -1)
-        return out.detach(), hidden.detach().cpu().numpy()
+        return torch.cat([states, out.detach()], 1), hidden.detach().cpu().numpy()
 
     def _forward_impl(self, states, history):
         out = states.view(states.size(0), -1, self.state_size)

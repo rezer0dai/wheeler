@@ -43,8 +43,8 @@ class ExperienceObserver(Process):
         self.sampler.put(data)
 
 class CrossExpBuffer(ReplayBuffer):
-    def __init__(self, mgr, cfg, objective_id):
-        super().__init__(cfg, objective_id)
+    def __init__(self, mgr, cfg):
+        super().__init__(cfg)
         self.mgr = mgr
 
     def _do_sample(self, full_episode, pivot, length, critic, hashkey, timestamp):
@@ -78,8 +78,8 @@ class CrossExpBuffer(ReplayBuffer):
 
 def cross_exp_buffer(cfg):
     mgr = ExperienceObserver(cfg)
-    def cross_buff(cfg, objective_id):
-        ceb = CrossExpBuffer(mgr, cfg, objective_id)
+    def cross_buff(cfg):
+        ceb = CrossExpBuffer(mgr, cfg)
         return ceb
 
     mgr.start() # separate process as we overhauling our main process with python threads

@@ -166,11 +166,12 @@ class Critic:
                     td_targets[-1].item(), len(self.replay)))
 
 # propagate back to main process
-        #  loss_gate.put([ goals, states, features, actions, probs, td_targets ])
+        loss_gate.put([ goals, states, features, actions, probs, td_targets ])
 
         # WARNING : EXPERIMENT ~~> here we on purpose provide same features as for n-state
             # basically we are leaking future of that trajectory, what our agent will do ?
-        loss_gate.put([ goals, states, n_features, actions, probs, td_targets ])
+            # bellman will be probably not proud of me at this point :)
+        #loss_gate.put([ goals, states, n_features, actions, probs, td_targets ])
 
     def _population(self, batch):
         return random.sample(range(len(batch)), random.randint(
@@ -239,6 +240,7 @@ class Critic:
 #  -> properly scale, and do thinks on background in paralell..
 # + if main concern is speed i would not do it in python in first place ..
     def reanalyze_experience(self, episode, indices, recalc):
+        # imho i iterate too much trough episode ... better to implement it in one sweep ... TODO
         goals, states, f, a, p = zip(*[
                 [e[0][0], e[0][1], e[0][2], e[0][3], e[0][4]] for e in episode ])
 
@@ -258,7 +260,7 @@ class Critic:
                 bool(random.randint(0, self.cfg['her_max_ratio'])), # update or not
                 ) for e in episode])))
 
-        n = policy.td_lambda(r, self.n_step, self.discount) if not self.cfg['gae'] else policy.gae(
+        n = [ e[0][9] for e in episode ] if not recalc or not self.cfg['gae'] else policy.gae(
                 r,
                 self.bot.qa_future(self.objective_id, goals, states, np.asarray(f), np.asarray(a)),
                 self.discount, self.cfg['gae_tau'])
