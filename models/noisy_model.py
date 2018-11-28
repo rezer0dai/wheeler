@@ -34,10 +34,9 @@ class FeaturedActor(nn.Module):
         assert not cfg['full_rnn_out'], "currently this is not supported ( full_rnn_out ) with FeaturedActor at noisynet"
 
         self.state_size = cfg['history_features']
-        self.state_size = self.state_size // cfg['rnn_n_layers']
-        self.state_size += cfg['her_state_features']
+        self.state_size = self.state_size // cfg['rnn_n_layers'] // 2
 
-        self.net = NoisyNet([self.state_size] + hiddens + [action_size])
+        self.net = NoisyNet([self.state_size + cfg['her_state_features']] + hiddens + [action_size])
         self.algo = DDPG(wrap_action) if cfg['ddpg'] else PPO(action_size)
 
     def forward(self, goal, state):

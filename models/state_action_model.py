@@ -1,10 +1,6 @@
-import math
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.autograd import Variable
-
-import numpy as np
 
 def initialize_weights(layer):
     if type(layer) not in [nn.Linear, ]:

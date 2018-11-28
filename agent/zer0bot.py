@@ -49,9 +49,6 @@ def agent_launch(bot_id, cfg, task_factory, encoder, Actor, Critic, stop_q, call
         for q in qs:
             while not q.empty():
                 q.get()
-    # seems queues has still something to process .. check more python multiproc to avoid this timer ...
-    time.sleep(3)#10
-
 
 class Zer0Bot:
     def __init__(self, bot_id, cfg, task_factory, encoder, Actor, Critic, goal_encoder):

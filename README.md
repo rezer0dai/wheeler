@@ -1,5 +1,6 @@
 # Wheeler - Reinforcement Learning experimental framework ( Policy Gradients )
 * WIP ~ work in progress, implementing + testing ideas
+* Notes on Policy Gradients methods, related to this project : https://medium.com/reinforcement-learning-w-policy-gradients
 * I focus mainly on Policy Gradients for now, and main engines implemented are DDPG + PPO, via ActorCritic ( full list of features you can read bellow )
 * Key feature of this framework are : 
 	* ***multi-agent + multi-PG-methods cooperation***

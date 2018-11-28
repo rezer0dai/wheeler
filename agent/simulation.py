@@ -16,7 +16,7 @@ def simulation_launch(cfg, bot, bot_id, objective_id, task_factory, loss, mcts, 
 
     sim = Simulation(cfg, bot, bot_id, objective_id, task_factory)
 
-    critic = Thread(#Process(#
+    critic = Process(#Thread(#
             target=critic_launch,
             args=(cfg, bot, objective_id, task_factory, sim.task.update_goal, ping, sync, loss, share, stats,))
     critic.start()
@@ -29,8 +29,6 @@ def simulation_launch(cfg, bot, bot_id, objective_id, task_factory, loss, mcts, 
     for q in [ping, sync, share, stats]:
         while q is not None and not q.empty():
             q.get()
-    # seems queues has still something to process .. check more python multiproc to avoid this timer ...
-    time.sleep(3)#10
 
 class Simulation:
     def __init__(self, cfg, bot, bot_id, objective_id, task_factory):

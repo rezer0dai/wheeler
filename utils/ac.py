@@ -10,10 +10,9 @@ class ActorCritic(nn.Module):
         self.actor = actor
         self.critic = critic
 
-        for i, actor in enumerate(self.actor):
-            self.add_module("actor_%i"%i, actor)
-        for i, critic in enumerate(self.critic):
-            self.add_module("critic_%i"%i, critic)
+        for i, (a, c) in enumerate(zip(self.actor, self.critic)):
+            self.add_module("actor_%i"%i, a)
+            self.add_module("critic_%i"%i, c)
 
         self.norm_grads = [ p.requires_grad for p in self.norm.parameters()]
         self.goal_grads = [] if not self.goal else [ p.requires_grad for p in self.goal.parameters()]
